@@ -309,7 +309,7 @@ input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.log-row{grid-template-columns:1fr}.log-ip{text-align:left}}@media(max-width:800px){.profile{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}table{display:block;overflow-x:auto;white-space:nowrap}.tabs{position:static}}@media(max-width:520px){.container{padding:18px 12px}.grid{grid-template-columns:1fr 1fr}.header{align-items:flex-start}.brand{align-items:flex-start}.logo{width:44px;height:44px}.toast{left:12px;right:12px;bottom:12px}}
 
 /* ===== SerkovTools V5 responsive UI ===== */
-html,body{width:100%;overflow-x:hidden}
+html,body{width:100%;overflow-x:hidden}.menu-open{overflow:hidden!important}
 body{font-size:15px;line-height:1.45}
 .container{max-width:1280px;margin:0 auto;padding:24px 20px 72px}
 .header{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0 22px}
@@ -366,12 +366,15 @@ table{min-width:650px}
 }
 @media(max-width:380px){.grid{grid-template-columns:1fr}.header h1{font-size:1.1rem}.header .menuBtn{width:44px!important;height:44px!important;flex-basis:44px!important}.kv{grid-template-columns:1fr}.kv b{margin-bottom:8px}}
 
+
+/* ===== SerkovTools V9 dashboard ===== */
+.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#c4b5fd}.heroTop,.sectionHead{display:flex;align-items:center;justify-content:space-between;gap:14px}.refreshMain{width:auto!important;min-width:110px!important}.dashboardStatus{margin-top:20px}.statusGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.statusBox{padding:14px;border:1px solid rgba(196,181,253,.12);border-radius:16px;background:rgba(255,255,255,.025);min-width:0}.statusBox .label{font-size:11px;color:var(--muted);margin-bottom:7px}.statusBox .value{font-weight:800;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.statusOnline{color:#86efac}.statusOffline{color:#fb7185}.dashboardGrid{margin:12px 0}.dashboardGrid .stat{min-height:118px;position:relative;overflow:hidden}.dashboardGrid .stat:after{content:"";position:absolute;width:90px;height:90px;right:-30px;bottom:-35px;border-radius:50%;background:rgba(139,92,246,.12);filter:blur(2px)}.statIcon{font-size:20px;margin-bottom:10px}.statMeta{font-size:11px;color:var(--muted);margin-top:5px}.quickActions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.quickActions button{margin:0!important;width:100%!important}.dashboardMini{display:flex;align-items:center;gap:10px}.dashboardMini strong{font-size:20px}.dashboardMini span{font-size:11px;color:var(--muted)}@media(max-width:800px){.statusGrid{grid-template-columns:repeat(2,1fr)}.quickActions{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){.heroTop,.sectionHead{align-items:flex-start}.heroTop{flex-direction:column}.refreshMain{width:100%!important}.statusGrid{grid-template-columns:1fr 1fr}.quickActions{grid-template-columns:1fr}.dashboardGrid{grid-template-columns:1fr 1fr}}@media(max-width:380px){.statusGrid,.dashboardGrid{grid-template-columns:1fr}}
 </style>
 </head>
 <body data-my-level="${admin.level || 0}">
 <div class="container">
   <div class="header">
-    <div class="brand"><button class="menuBtn ghost" onclick="toggleSidebar()" aria-label="Открыть меню">☰</button><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> <span class="mutedSep">•</span> ур. ${admin.level || 0}</div>
+    <div class="brand"><button id="menuOpenBtn" type="button" class="menuBtn ghost" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false">☰</button><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> <span class="mutedSep">•</span> ур. ${admin.level || 0}</div>
     </div></div>
     <div class="headerActions"><span class="livePill"><i></i> Панель онлайн</span><a href="/logout"><button class="gray">Выйти</button></a></div>
   </div>
@@ -394,14 +397,20 @@ table{min-width:650px}
 
   <!-- ГЛАВНАЯ -->
   <div id="tab-main">
-    <div class="card">
-      <h3>Управление</h3>
-      ${hasPermission(admin,'view_status') ? '<button class="blue" onclick="getStatus()">⚡ Статус</button>' : ''}
-      ${hasPermission(admin,'toggle_antisliv') ? '<button class="green" onclick="toggleAntiSliv()">🛡 Anti-Sliv</button>' : ''}
-      ${hasPermission(admin,'restart_bot') ? '<button class="red" onclick="restartBot()">🔄 Рестарт</button>' : ''}
-      ${hasPermission(admin,'view_stats') ? '<button class="purple" onclick="getStats()">📊 Статистика</button>' : ''}
-    </div>
-    <div class="card"><h3>Результат</h3><pre id="result">Выберите действие</pre></div>
+    <section class="hero card">
+      <div class="heroTop"><div><span class="eyebrow">LIVE MONITOR</span><h2 style="margin:8px 0 4px">Состояние сервера</h2><p class="sub">Показатели обновляются через защищённый мост с Wispbyte.</p></div><button class="ghost refreshMain" type="button" onclick="refreshDashboard()">↻ Обновить</button></div>
+      <div id="dashboardStatus" class="dashboardStatus"><div class="empty">Загрузка данных бота…</div></div>
+    </section>
+    <div id="dashboardStats" class="grid dashboardGrid"></div>
+    <section class="card"><div class="sectionHead"><div><h3>Быстрые действия</h3><p class="sub">Управление доступно согласно вашей роли.</p></div></div>
+      <div class="quickActions">
+        ${hasPermission(admin,'view_status') ? '<button class="blue" type="button" onclick="getStatus()">⚡ Проверить статус</button>' : ''}
+        ${hasPermission(admin,'toggle_antisliv') ? '<button class="green" type="button" onclick="toggleAntiSliv()">🛡 Anti-Sliv</button>' : ''}
+        ${hasPermission(admin,'restart_bot') ? '<button class="red" type="button" onclick="restartBot()">🔄 Рестарт</button>' : ''}
+        ${hasPermission(admin,'view_stats') ? '<button class="purple" type="button" onclick="getStats()">📊 Подробная статистика</button>' : ''}
+      </div>
+    </section>
+    <section class="card"><div class="sectionHead"><div><h3>Ответ системы</h3><p class="sub">Последняя операция панели.</p></div></div><pre id="result">Готово к работе</pre></section>
   </div>
 
   <!-- ANTI-SLIV -->
@@ -494,7 +503,7 @@ table{min-width:650px}
   </div>
 </div>
 
-<script src="/panel-client.js?v=8" defer></script>
+<script src="/panel-client.js?v=9" defer></script>
 
 </body>
 </html>`);

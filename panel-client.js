@@ -1,8 +1,8 @@
 
 const myLevel = Number(document.body.dataset.myLevel || 0);
 
-function toggleSidebar(ev){if(ev)ev.stopPropagation();document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open');}
-function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');}
+function toggleSidebar(ev){if(ev)ev.stopPropagation();const s=document.getElementById('sidebar'),o=document.getElementById('sidebarOverlay'),b=document.getElementById('menuOpenBtn');if(!s||!o)return;const open=!s.classList.contains('open');s.classList.toggle('open',open);o.classList.toggle('open',open);document.body.classList.toggle('menu-open',open);if(b)b.setAttribute('aria-expanded',open?'true':'false');}
+function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');document.body.classList.remove('menu-open');document.getElementById('menuOpenBtn')?.setAttribute('aria-expanded','false');}
 function showTab(name, ev) {
   const target=document.getElementById('tab-' + name);
   if(!target){if(typeof showToast==='function')showToast('Раздел недоступен',true);return false;}
@@ -40,7 +40,9 @@ async function api(url, method='GET', body=null) {
 document.addEventListener('click',function(e){const b=e.target.closest('button');if(!b||b.disabled)return;const r=document.createElement('span');r.className='ripple';const rect=b.getBoundingClientRect();const size=Math.max(rect.width,rect.height);r.style.width=r.style.height=size+'px';r.style.left=(e.clientX-rect.left-size/2)+'px';r.style.top=(e.clientY-rect.top-size/2)+'px';b.appendChild(r);setTimeout(()=>r.remove(),600);});
 
 async function getStatus() {
-  document.getElementById('result').textContent = JSON.stringify(await api('/api/status'), null, 2);
+  const d=await api('/api/status');
+  document.getElementById('result').textContent=JSON.stringify(d,null,2);
+  if(!d.error) renderDashboardStats({state:d,guild:d.guild||{},attempts:d.attempts||{}});
 }
 async function toggleAntiSliv() {
   document.getElementById('result').textContent = JSON.stringify(await api('/api/antisliv/toggle','POST'), null, 2);
@@ -50,8 +52,27 @@ async function restartBot() {
   document.getElementById('result').textContent = JSON.stringify(await api('/api/restart','POST'), null, 2);
 }
 async function getStats() {
-  document.getElementById('result').textContent = JSON.stringify(await api('/api/stats'), null, 2);
+  const d = await api('/api/stats');
+  if (d.error) { showToast(d.error,true); return; }
+  renderDashboardStats(d);
+  document.getElementById('result').textContent = JSON.stringify(d, null, 2);
 }
+function fmtUptime(sec){sec=Number(sec)||0;const d=Math.floor(sec/86400);sec%=86400;const h=Math.floor(sec/3600);sec%=3600;const m=Math.floor(sec/60);return (d?d+'д ':'')+String(h).padStart(2,'0')+'ч '+String(m).padStart(2,'0')+'м';}
+function renderDashboardStats(d){
+  const st=d.state||{}; const g=d.guild||{}; const attempts=d.attempts||{};
+  const stat=document.getElementById('dashboardStats'); if(stat){stat.innerHTML=[
+    ['👥','Участники',g.members||st.members||0,g.humans!=null?`Людей: ${g.humans}`:''],
+    ['🤖','Боты',g.bots||0,'Discord'],
+    ['🟢','Онлайн',g.online||0,'В сети'],
+    ['💎','Бусты',g.boosts||0,g.boostTier?`Уровень ${g.boostTier}`:''],
+    ['🎭','Роли',g.roles||0,'Discord'],
+    ['💬','Каналы',g.channels||0,'Discord'],
+    ['🛡','Попытки сегодня',attempts.total||0,`Лимит: ${attempts.limit||st.maxAttempts||0}`],
+    ['⚠️','Достигли лимита',attempts.reached||0,'Anti-Sliv']
+  ].map(x=>`<div class="stat"><div class="statIcon">${x[0]}</div><b>${esc(x[2])}</b><div class="statMeta">${esc(x[1])}${x[3]?` · ${esc(x[3])}`:''}</div></div>`).join('');}
+  const box=document.getElementById('dashboardStatus'); if(box){const svc=[['Discord',st.discord],['VK',st.vk],['Telegram',st.telegram],['Anti-Sliv',st.antiSliv?'online':'offline']];box.innerHTML=`<div class="statusGrid">${svc.map(x=>`<div class="statusBox"><div class="label">${x[0]}</div><div class="value ${x[1]==='online'?'statusOnline':'statusOffline'}">${x[1]==='online'?'● Онлайн':'● Оффлайн'}</div></div>`).join('')}</div><div class="sub" style="margin-top:12px">Ping: <b>${st.ping==null?'—':esc(st.ping+' ms')}</b> · Uptime: <b>${fmtUptime(st.uptime)}</b> · Сервер: <b>${esc(g.name||'Discord')}</b></div>`; }
+}
+async function refreshDashboard(){const d=await api('/api/stats');if(d.error){showToast(d.error,true);return;}renderDashboardStats(d);showToast('Статистика обновлена');}
 
 async function loadAntiSliv() {
   const d = await api('/api/antisliv/settings');
@@ -181,7 +202,7 @@ function renderActionLogs(data){document.getElementById('actionCount').textConte
 async function loadLogs(){try{cachedLoginLogs=await api('/api/logs');renderLoginLogs(cachedLoginLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи входов',true);}}
 async function loadActions(){try{cachedActionLogs=await api('/api/actions');renderActionLogs(cachedActionLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи действий',true);}}
 window.toggleSidebar=toggleSidebar; window.closeSidebar=closeSidebar; window.showTab=showTab;
-window.getStatus=getStatus; window.toggleAntiSliv=toggleAntiSliv; window.restartBot=restartBot; window.getStats=getStats;
+window.getStatus=getStatus; window.toggleAntiSliv=toggleAntiSliv; window.restartBot=restartBot; window.getStats=getStats; window.refreshDashboard=refreshDashboard; window.renderDashboardStats=renderDashboardStats;
 window.saveAntiSliv=saveAntiSliv; window.createAdmin=createAdmin; window.deleteAdmin=deleteAdmin; window.createRole=createRole; window.deleteWebRole=deleteWebRole;
 window.banIp=banIp; window.unbanIp=unbanIp; window.loadIpBans=loadIpBans; window.filterIpBans=filterIpBans;
 window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openProfile=openProfile; window.saveUser=saveUser; window.kickUser=kickUser; window.changeRole=changeRole; window.loadAdmins=loadAdmins; window.loadRoles=loadRoles; window.loadAntiSliv=loadAntiSliv;
@@ -189,6 +210,19 @@ window.loadDiscordRoles=loadDiscordRoles; window.createDiscordRole=createDiscord
 window.loadLogs=loadLogs; window.loadActions=loadActions; window.filterLogs=filterLogs; window.showToast=showToast;
 window.addEventListener('error', function(e){ console.error('[PANEL JS]', e.error || e.message); try{showToast('Ошибка интерфейса: '+(e.message||'неизвестная ошибка'), true);}catch(_){} });
 window.addEventListener('unhandledrejection', function(e){ console.error('[PANEL Promise]', e.reason); try{showToast('Ошибка операции. Проверьте соединение и права.', true);}catch(_){} });
+
+// Direct menu binding: works reliably on Android WebView/Chrome even when inline handlers are cached oddly.
+document.addEventListener('DOMContentLoaded', function(){
+  refreshDashboard().catch(()=>{});
+  const btn=document.getElementById('menuOpenBtn');
+  if(btn){
+    const open=()=>{toggleSidebar(); btn.setAttribute('aria-expanded',document.getElementById('sidebar')?.classList.contains('open')?'true':'false');};
+    btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();open();},{passive:false});
+    btn.addEventListener('pointerup',e=>{if(e.pointerType==='touch'){e.preventDefault();e.stopPropagation();open();}},{passive:false});
+  }
+  document.getElementById('sidebarOverlay')?.addEventListener('click',closeSidebar);
+  document.getElementById('sidebar')?.addEventListener('click',e=>e.stopPropagation());
+});
 
 // Fallback event delegation: avoids relying on inline onclick handlers on mobile browsers.
 document.addEventListener('click', function (e) {
