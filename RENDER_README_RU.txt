@@ -46,3 +46,9 @@ Start Command: npm start
 
 Официальная документация Telegram Login:
 https://core.telegram.org/bots/telegram-login
+
+
+ИСПРАВЛЕНИЕ v14
+- В запрос Telegram OIDC добавлен обязательный параметр bot_id.
+- Для текущей конфигурации bot_id передаётся тем же числовым значением, что и TELEGRAM_CLIENT_ID (8805088937).
+- Redirect URI остаётся https://serkovtools-panel.onrender.com/auth/telegram/callback.
