@@ -304,6 +304,65 @@ input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@keyframes logIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}@keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.log-row{grid-template-columns:1fr}.log-ip{text-align:left}}@media(max-width:800px){.profile{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}table{display:block;overflow-x:auto;white-space:nowrap}.tabs{position:static}}@media(max-width:520px){.container{padding:18px 12px}.grid{grid-template-columns:1fr 1fr}.header{align-items:flex-start}.brand{align-items:flex-start}.logo{width:44px;height:44px}.toast{left:12px;right:12px;bottom:12px}}
+
+/* ===== SerkovTools V5 responsive UI ===== */
+html,body{width:100%;overflow-x:hidden}
+body{font-size:15px;line-height:1.45}
+.container{max-width:1280px;margin:0 auto;padding:24px 20px 72px}
+.header{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0 22px}
+.header .brand{min-width:0;display:flex;align-items:center;gap:12px}
+.header .brand>div:last-child{min-width:0}
+.header h1{font-size:clamp(1.35rem,4vw,2rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header .sub{font-size:12px}
+.headerActions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.livePill{display:inline-flex;align-items:center;gap:7px;padding:9px 12px;border-radius:999px;background:rgba(52,211,153,.09);border:1px solid rgba(52,211,153,.18);font-size:12px;color:#c8f7df;white-space:nowrap}
+.livePill i{width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 12px rgba(52,211,153,.8);animation:pulse 1.8s infinite}
+.menuBtn{width:48px!important;height:48px!important;padding:0!important;margin:0!important;display:grid!important;place-items:center!important;font-size:22px!important;flex:0 0 48px!important;border-radius:15px!important}
+.headerActions .gray{width:auto!important;margin:0!important;padding:11px 18px!important}
+/* Off-canvas navigation */
+.sidebarOverlay{position:fixed;inset:0;background:rgba(3,2,8,.62);backdrop-filter:blur(5px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s ease,visibility .25s ease;z-index:998}
+.sidebarOverlay.open{opacity:1;visibility:visible;pointer-events:auto}
+.sidebar{position:fixed;z-index:999;left:0;top:0;bottom:0;width:min(310px,86vw);padding:18px;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(25,17,47,.98),rgba(8,6,16,.99));border-right:1px solid rgba(196,181,253,.16);box-shadow:25px 0 80px rgba(0,0,0,.45);backdrop-filter:blur(24px);transform:translateX(-105%);transition:transform .3s cubic-bezier(.2,.8,.2,1);overflow-y:auto;overscroll-behavior:contain}
+.sidebar.open{transform:translateX(0)}
+.sideTop{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px;border-bottom:1px solid rgba(255,255,255,.07)}
+.sideTitle{display:flex;align-items:center;gap:10px;min-width:0}.sideTitle>div{display:flex;flex-direction:column;min-width:0}.sideTitle b{font-size:16px}.sideTitle small{color:var(--muted);font-size:11px;margin-top:2px}
+.miniLogo{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,#6366f1,#c026d3);box-shadow:0 0 25px rgba(139,92,246,.3)}
+.closeBtn{width:42px!important;height:42px!important;padding:0!important;margin:0!important;font-size:24px!important;display:grid!important;place-items:center!important;flex:0 0 42px!important}
+.sideNav{display:grid;gap:7px;padding:16px 0}.sideItem{width:100%!important;min-height:48px!important;margin:0!important;padding:11px 13px!important;display:flex!important;align-items:center!important;gap:11px!important;justify-content:flex-start!important;text-align:left!important;background:transparent!important;border:1px solid transparent!important;box-shadow:none!important;border-radius:14px!important;color:#d8d1e8!important;font-size:14px!important;font-weight:650!important}.sideItem span{width:25px;text-align:center;font-size:18px}.sideItem:hover{background:rgba(139,92,246,.09)!important;border-color:rgba(196,181,253,.12)!important;transform:none!important;filter:none!important}.sideItem.active{background:linear-gradient(135deg,rgba(99,102,241,.95),rgba(168,85,247,.95))!important;color:#fff!important;border-color:transparent!important;box-shadow:0 10px 28px rgba(124,58,237,.28)!important}.sideBottom{margin-top:auto;padding-top:15px;border-top:1px solid rgba(255,255,255,.07)}.sideAccount{display:flex;align-items:center;gap:10px;padding:10px;border-radius:14px;background:rgba(255,255,255,.035)}.sideAccount>div:last-child{display:flex;flex-direction:column;min-width:0}.sideAccount b,.sideAccount small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sideAccount small{color:var(--muted);font-size:11px}.accountAvatar{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#7c3aed,#c026d3);font-weight:800}
+/* Hide old navigation completely */
+.legacyTabs{display:none!important}
+/* Buttons */
+button{font-family:inherit;min-height:42px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button:focus-visible,.sideItem:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid rgba(192,132,252,.8);outline-offset:2px}
+.card{overflow:hidden}.toolbar{width:100%}.toolbar button,.log-toolbar button{flex:0 0 auto}.toolbar input,.log-toolbar input,.log-toolbar select{min-width:0}
+input,select,textarea{max-width:100%;font-size:14px}
+input[type=checkbox]{width:auto;max-width:none;accent-color:#8b5cf6}
+/* Mobile-friendly controls and tables */
+.tableWrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{min-width:650px}
+.avatar{width:36px;height:36px;border-radius:12px;object-fit:cover;vertical-align:middle;margin-right:8px}
+.userrow td:first-child{cursor:pointer}
+.profile{align-items:start}.profile h2{overflow-wrap:anywhere}.kv{min-width:0}.kv b{overflow-wrap:anywhere}
+.log-row{min-width:0}.log-details{overflow-wrap:anywhere;white-space:normal;word-break:break-word}.log-ip{overflow-wrap:anywhere;word-break:break-word}
+.ripple{position:absolute!important;border-radius:50%;pointer-events:none;background:rgba(255,255,255,.25);transform:scale(0);animation:ripple .6s ease-out}
+@keyframes ripple{to{transform:scale(2.4);opacity:0}}@keyframes pulse{0%,100%{opacity:.65;transform:scale(.9)}50%{opacity:1;transform:scale(1.15)}}
+@media(max-width:700px){
+ .container{padding:14px 12px 55px}
+ .header{padding-bottom:16px;align-items:flex-start}
+ .header .brand{gap:9px;align-items:flex-start}
+ .header .logo{width:44px;height:44px;flex:0 0 44px;border-radius:14px;font-size:21px}
+ .header h1{font-size:1.25rem}.header .sub{font-size:11px}.header .brand>div:last-child>div:last-child{font-size:12px;white-space:normal}
+ .headerActions{gap:6px}.livePill{display:none}.headerActions .gray{padding:9px 12px!important;font-size:12px}
+ .card{padding:16px;border-radius:18px;margin-bottom:12px}.hero{padding:20px}
+ .grid{gap:9px}.stat{padding:13px}.stat b{font-size:22px}
+ .toolbar,.log-toolbar{display:grid;grid-template-columns:1fr;gap:8px}.toolbar>* , .log-toolbar>*{width:100%!important;margin:0!important}.toolbar button,.log-toolbar button{min-height:44px}
+ .profile{grid-template-columns:1fr;gap:14px}.profileAvatar{width:86px;height:86px;border-radius:22px}.kv{grid-template-columns:105px minmax(0,1fr);font-size:13px}
+ .log-row{grid-template-columns:1fr;gap:7px;padding:13px}.log-title{font-size:13px}.log-time,.log-ip{font-size:10px}
+ .card>button:not(.ghost){margin:5px 0;width:100%}
+ .sideItem{min-height:50px!important;font-size:15px!important}
+}
+@media(max-width:380px){.grid{grid-template-columns:1fr}.header h1{font-size:1.1rem}.header .menuBtn{width:44px!important;height:44px!important;flex-basis:44px!important}.kv{grid-template-columns:1fr}.kv b{margin-bottom:8px}}
+
 </style>
 </head>
 <body>
@@ -329,17 +388,6 @@ input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba
     </div>
     <div class="sideBottom"><div class="sideAccount"><div class="accountAvatar">${String(admin.username||'A').slice(0,1).toUpperCase()}</div><div><b>${admin.username}</b><small>${admin.role_name || 'Без роли'}</small></div></div></div>
   </aside>
-
-  <div class="tabs legacyTabs" aria-hidden="true">
-    <div class="tab active" onclick="showTab('main', event)">Главная</div>
-    ${hasPermission(admin,'toggle_antisliv') ? '<div class="tab" onclick="showTab(\'antisliv\', event)">Anti-Sliv</div>' : ''}
-    ${hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'admins\', event)">Админы</div>' : ''}
-    ${hasPermission(admin,'manage_roles') ? '<div class="tab" onclick="showTab(\'roles\', event)">Уровни</div>' : ''}
-    ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'ipbans\', event)">Баны IP</div>' : ''}
-    ${hasPermission(admin,'view_users') ? '<div class="tab" onclick="showTab(\'users\', event)">Пользователи</div>' : ''}
-    ${hasPermission(admin,'manage_discord_roles') ? '<div class="tab" onclick="showTab(\'droles\', event)">Роли Discord</div>' : ''}
-    ${hasPermission(admin,'view_logs') ? '<div class="tab" onclick="showTab(\'logs\', event)">Логи</div>' : ''}
-  </div>
 
   <!-- ГЛАВНАЯ -->
   <div id="tab-main">
@@ -450,12 +498,13 @@ function toggleSidebar(ev){if(ev)ev.stopPropagation();document.getElementById('s
 function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');}
 function showTab(name, ev) {
   const target=document.getElementById('tab-' + name);
-  if(!target){showToast('Раздел недоступен',true);return;}
+  if(!target){if(typeof showToast==='function')showToast('Раздел недоступен',true);return false;}
   document.querySelectorAll('[id^=tab-]').forEach(el => el.classList.add('hidden'));
   target.classList.remove('hidden');
   document.querySelectorAll('.sideItem').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-  if(ev && ev.currentTarget && ev.currentTarget.classList.contains('tab')) ev.currentTarget.classList.add('active');
-  window.scrollTo({top:0,behavior:'smooth'});
+  if (ev && ev.currentTarget && ev.currentTarget.classList.contains('sideItem')) closeSidebar();
+  if(ev && ev.currentTarget) ev.currentTarget.blur?.();
+  try { window.scrollTo({top:0,behavior:'smooth'}); } catch(_) { window.scrollTo(0,0); }
   try {
     if (name === 'admins') loadAdmins();
     if (name === 'roles') loadRoles();
@@ -621,6 +670,13 @@ function renderLoginLogs(data){document.getElementById('loginCount').textContent
 function renderActionLogs(data){document.getElementById('actionCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(a,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(a.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(a.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot"></span>'+escHtml(a.action||'СОБЫТИЕ')+' <span class="badge">'+escHtml(a.username||'system')+'</span></div><div class="log-details" title="'+escHtml(a.details||'')+'">'+escHtml(a.details||'Без деталей')+'</div></div><div class="sub">ACTION</div></div>';});document.getElementById('actionsList').innerHTML=html;}
 async function loadLogs(){try{cachedLoginLogs=await api('/api/logs');renderLoginLogs(cachedLoginLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи входов',true);}}
 async function loadActions(){try{cachedActionLogs=await api('/api/actions');renderActionLogs(cachedActionLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи действий',true);}}
+window.toggleSidebar=toggleSidebar; window.closeSidebar=closeSidebar; window.showTab=showTab;
+window.getStatus=getStatus; window.toggleAntiSliv=toggleAntiSliv; window.restartBot=restartBot; window.getStats=getStats;
+window.saveAntiSliv=saveAntiSliv; window.createAdmin=createAdmin; window.deleteAdmin=deleteAdmin; window.createRole=createRole; window.deleteWebRole=deleteWebRole;
+window.banIp=banIp; window.unbanIp=unbanIp; window.loadIpBans=loadIpBans; window.filterIpBans=filterIpBans;
+window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openProfile=openProfile; window.saveUser=saveUser; window.kickUser=kickUser;
+window.loadDiscordRoles=loadDiscordRoles; window.createDiscordRole=createDiscordRole; window.deleteDiscordRole=deleteDiscordRole;
+window.loadLogs=loadLogs; window.loadActions=loadActions; window.filterLogs=filterLogs;
 showTab('main');
 </script>
 </body>
