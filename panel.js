@@ -246,14 +246,9 @@ async function logLogin(username, ip, userAgent, success) {
 // ---------- LOGIN ----------
 app.get('/login', (req, res) => {
     if (req.session?.isAdmin) return res.redirect('/');
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Вход</title>
-<style>body{font-family:system-ui;background:#0f0f13;color:#eee;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
-form{background:#1a1a22;padding:40px;border-radius:16px;width:340px}input{width:100%;padding:12px;margin:8px 0;border:none;border-radius:8px;background:#111;color:#fff;box-sizing:border-box}
-button{width:100%;padding:14px;margin-top:15px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer}</style></head>
-<body><form method="POST" action="/login"><h2 style="text-align:center;margin:0 0 25px">Вход в панель</h2>
-<input name="username" placeholder="Логин" required autocomplete="username">
-<input name="password" type="password" placeholder="Пароль" required autocomplete="current-password">
-<button type="submit">Войти</button></form></body></html>`);
+    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — SerkovTools</title><style>
+:root{--a:#8b5cf6;--b:#c026d3;--bg:#07050c;--text:#f8f5ff;--muted:#a59abf}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;overflow:hidden;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 20% 15%,rgba(124,58,237,.32),transparent 32%),radial-gradient(circle at 85% 80%,rgba(192,38,211,.18),transparent 30%),var(--bg)}body:before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(167,139,250,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(167,139,250,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(#000,transparent 90%);pointer-events:none}.orb{position:fixed;width:320px;height:320px;border-radius:50%;filter:blur(70px);opacity:.22;background:#7c3aed;animation:drift 9s ease-in-out infinite}.orb.one{left:-100px;top:-80px}.orb.two{right:-120px;bottom:-120px;background:#c026d3;animation-delay:-3s}.loginWrap{width:min(440px,calc(100% - 28px));position:relative;z-index:2}.loginCard{padding:34px;border:1px solid rgba(196,181,253,.17);border-radius:28px;background:linear-gradient(145deg,rgba(27,18,48,.86),rgba(10,7,18,.88));box-shadow:0 30px 100px rgba(0,0,0,.48),0 0 70px rgba(124,58,237,.13);backdrop-filter:blur(24px);animation:enter .6s cubic-bezier(.2,.8,.2,1)}.brand{display:flex;align-items:center;gap:13px;margin-bottom:28px}.logo{width:56px;height:56px;display:grid;place-items:center;border-radius:18px;background:linear-gradient(135deg,#6366f1,#a855f7 55%,#d946ef);font-size:25px;box-shadow:0 0 40px rgba(139,92,246,.35);animation:float 4s ease-in-out infinite}.brand h1{font-size:24px;margin:0;letter-spacing:-.03em}.brand p{margin:4px 0 0;color:var(--muted);font-size:12px}.eyebrow{display:inline-flex;padding:6px 9px;border-radius:999px;background:rgba(139,92,246,.12);border:1px solid rgba(196,181,253,.13);color:#d8b4fe;font-size:10px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px}h2{margin:0 0 7px;font-size:25px}.desc{margin:0 0 24px;color:var(--muted);font-size:13px;line-height:1.5}.field{margin:13px 0}.field label{display:block;font-size:11px;color:#c8bedb;margin:0 0 7px}input{width:100%;padding:14px 15px;border-radius:14px;border:1px solid rgba(167,139,250,.17);background:rgba(5,3,11,.7);color:#fff;outline:none;font-size:14px;transition:.2s}input:focus{border-color:#8b5cf6;box-shadow:0 0 0 4px rgba(139,92,246,.1),0 0 25px rgba(139,92,246,.08);transform:translateY(-1px)}button{position:relative;overflow:hidden;width:100%;padding:14px;border:0;border-radius:14px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#6366f1,#8b5cf6 55%,#c026d3);box-shadow:0 12px 30px rgba(124,58,237,.25);transition:transform .2s,filter .2s}button:hover{transform:translateY(-2px);filter:brightness(1.08)}.foot{margin-top:18px;text-align:center;color:#756b8e;font-size:10px}@keyframes enter{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(35px,-25px)}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body><div class="orb one"></div><div class="orb two"></div><main class="loginWrap"><section class="loginCard"><div class="brand"><div class="logo">⚡</div><div><h1>SerkovTools</h1><p>Центр управления сервером</p></div></div><span class="eyebrow">Secure access</span><h2>Добро пожаловать</h2><p class="desc">Войдите в административную панель, чтобы управлять сервером и его пользователями.</p><form method="POST" action="/login"><div class="field"><label>ЛОГИН</label><input name="username" placeholder="Введите логин" required autocomplete="username"></div><div class="field"><label>ПАРОЛЬ</label><input name="password" type="password" placeholder="Введите пароль" required autocomplete="current-password"></div><button type="submit">Войти в панель <span>→</span></button></form><div class="foot">SerkovTools • защищённая панель администратора</div></section></main></body></html>`);
 });
 
 app.post('/login', async (req, res) => {
@@ -294,7 +289,7 @@ app.get('/', requireAdmin, async (req, res) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Панель управления</title>
+<title>SerkovTools — Панель управления</title>
 <style>
 :root{--bg:#09070f;--panel:rgba(19,14,34,.72);--panel2:rgba(28,20,48,.72);--line:rgba(196,181,253,.14);--text:#f7f3ff;--muted:#9f96b8;--accent:#8b5cf6;--accent2:#c084fc;--good:#34d399;--bad:#fb7185;--warn:#fbbf24}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 15% -10%,rgba(124,58,237,.35),transparent 32%),radial-gradient(circle at 105% 15%,rgba(192,132,252,.18),transparent 28%),#09070f;color:var(--text);margin:0;min-height:100vh;overflow-x:hidden}
@@ -314,20 +309,36 @@ input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba
 <body>
 <div class="container">
   <div class="header">
-    <div class="brand"><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> (ур. ${admin.level || 0})</div>
+    <div class="brand"><button class="menuBtn ghost" onclick="toggleSidebar(event)" aria-label="Открыть меню">☰</button><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> <span class="mutedSep">•</span> ур. ${admin.level || 0}</div>
     </div></div>
-    <a href="/logout"><button class="gray">Выйти</button></a>
+    <div class="headerActions"><span class="livePill"><i></i> Панель онлайн</span><a href="/logout"><button class="gray">Выйти</button></a></div>
   </div>
 
-  <div class="tabs">
+  <div id="sidebarOverlay" class="sidebarOverlay" onclick="closeSidebar()"></div>
+  <aside id="sidebar" class="sidebar">
+    <div class="sideTop"><div class="sideTitle"><span class="miniLogo">⚡</span><div><b>SerkovTools</b><small>Навигация</small></div></div><button class="ghost closeBtn" onclick="closeSidebar()">×</button></div>
+    <div class="sideNav">
+      <button class="sideItem active" data-tab="main" onclick="showTab('main', event);closeSidebar()"><span>⌂</span><b>Главная</b></button>
+      ${hasPermission(admin,'toggle_antisliv') ? '<button class="sideItem" data-tab="antisliv" onclick="showTab(\'antisliv\', event);closeSidebar()"><span>🛡</span><b>Anti-Sliv</b></button>' : ''}
+      ${hasPermission(admin,'manage_admins') ? '<button class="sideItem" data-tab="admins" onclick="showTab(\'admins\', event);closeSidebar()"><span>♟</span><b>Админы</b></button>' : ''}
+      ${hasPermission(admin,'manage_roles') ? '<button class="sideItem" data-tab="roles" onclick="showTab(\'roles\', event);closeSidebar()"><span>◈</span><b>Уровни</b></button>' : ''}
+      ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<button class="sideItem" data-tab="ipbans" onclick="showTab(\'ipbans\', event);closeSidebar()"><span>⌁</span><b>Баны IP</b></button>' : ''}
+      ${hasPermission(admin,'view_users') ? '<button class="sideItem" data-tab="users" onclick="showTab(\'users\', event);closeSidebar()"><span>♙</span><b>Пользователи</b></button>' : ''}
+      ${hasPermission(admin,'manage_discord_roles') ? '<button class="sideItem" data-tab="droles" onclick="showTab(\'droles\', event);closeSidebar()"><span>◎</span><b>Роли Discord</b></button>' : ''}
+      ${hasPermission(admin,'view_logs') ? '<button class="sideItem" data-tab="logs" onclick="showTab(\'logs\', event);closeSidebar()"><span>▤</span><b>Логи</b></button>' : ''}
+    </div>
+    <div class="sideBottom"><div class="sideAccount"><div class="accountAvatar">${String(admin.username||'A').slice(0,1).toUpperCase()}</div><div><b>${admin.username}</b><small>${admin.role_name || 'Без роли'}</small></div></div></div>
+  </aside>
+
+  <div class="tabs legacyTabs" aria-hidden="true">
     <div class="tab active" onclick="showTab('main', event)">Главная</div>
-    ${hasPermission(admin,'toggle_antisliv') ? '<div class="tab" onclick="showTab(\'antisliv\')">Anti-Sliv</div>' : ''}
-    ${hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'admins\')">Админы</div>' : ''}
-    ${hasPermission(admin,'manage_roles') ? '<div class="tab" onclick="showTab(\'roles\')">Уровни</div>' : ''}
-    ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'ipbans\')">Баны IP</div>' : ''}
-    ${hasPermission(admin,'view_users') ? '<div class="tab" onclick="showTab(\'users\')">Пользователи</div>' : ''}
-    ${hasPermission(admin,'manage_discord_roles') ? '<div class="tab" onclick="showTab(\'droles\')">Роли Discord</div>' : ''}
-    ${hasPermission(admin,'view_logs') ? '<div class="tab" onclick="showTab(\'logs\')">Логи</div>' : ''}
+    ${hasPermission(admin,'toggle_antisliv') ? '<div class="tab" onclick="showTab(\'antisliv\', event)">Anti-Sliv</div>' : ''}
+    ${hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'admins\', event)">Админы</div>' : ''}
+    ${hasPermission(admin,'manage_roles') ? '<div class="tab" onclick="showTab(\'roles\', event)">Уровни</div>' : ''}
+    ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'ipbans\', event)">Баны IP</div>' : ''}
+    ${hasPermission(admin,'view_users') ? '<div class="tab" onclick="showTab(\'users\', event)">Пользователи</div>' : ''}
+    ${hasPermission(admin,'manage_discord_roles') ? '<div class="tab" onclick="showTab(\'droles\', event)">Роли Discord</div>' : ''}
+    ${hasPermission(admin,'view_logs') ? '<div class="tab" onclick="showTab(\'logs\', event)">Логи</div>' : ''}
   </div>
 
   <!-- ГЛАВНАЯ -->
@@ -435,26 +446,42 @@ input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba
 <script>
 const myLevel = ${admin.level || 0};
 
+function toggleSidebar(ev){if(ev)ev.stopPropagation();document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('open');}
+function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');}
 function showTab(name, ev) {
+  const target=document.getElementById('tab-' + name);
+  if(!target){showToast('Раздел недоступен',true);return;}
   document.querySelectorAll('[id^=tab-]').forEach(el => el.classList.add('hidden'));
-  document.getElementById('tab-' + name).classList.remove('hidden');
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  if (ev && ev.currentTarget) ev.currentTarget.classList.add('active');
-  if (name === 'admins') loadAdmins();
-  if (name === 'roles') loadRoles();
-  if (name === 'logs') { loadLogs(); loadActions(); }
-  if (name === 'antisliv') loadAntiSliv();
-  if (name === 'ipbans') loadIpBans();
-  if (name === 'users') loadUsers();
-  if (name === 'droles') loadDiscordRoles();
+  target.classList.remove('hidden');
+  document.querySelectorAll('.sideItem').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
+  if(ev && ev.currentTarget && ev.currentTarget.classList.contains('tab')) ev.currentTarget.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+  try {
+    if (name === 'admins') loadAdmins();
+    if (name === 'roles') loadRoles();
+    if (name === 'logs') { loadLogs(); loadActions(); }
+    if (name === 'antisliv') loadAntiSliv();
+    if (name === 'ipbans') loadIpBans();
+    if (name === 'users') loadUsers();
+    if (name === 'droles') loadDiscordRoles();
+  } catch(e){showToast('Не удалось открыть раздел',true);console.error(e);}
 }
 
 async function api(url, method='GET', body=null) {
-  const opts = { method, headers: {'Content-Type':'application/json'}, credentials:'include' };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
-  return res.json();
+  try {
+    const opts = { method, headers: {'Content-Type':'application/json','Accept':'application/json'}, credentials:'include' };
+    if (body !== null) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : {}; } catch { data = {error:text || 'Сервер вернул некорректный ответ'}; }
+    if(res.status===401){showToast('Сессия закончилась. Войдите снова.',true);setTimeout(()=>location.href='/login',700);return {error:'Не авторизован'};}
+    if(!res.ok && !data.error) data.error='Ошибка запроса ('+res.status+')';
+    return data;
+  } catch(e){ console.error(e); showToast('Нет соединения с сервером',true); return {error:'Нет соединения с сервером'}; }
 }
+
+// Единый ripple-эффект и обработка Enter для быстрых форм.
+document.addEventListener('click',function(e){const b=e.target.closest('button');if(!b||b.disabled)return;const r=document.createElement('span');r.className='ripple';const rect=b.getBoundingClientRect();const size=Math.max(rect.width,rect.height);r.style.width=r.style.height=size+'px';r.style.left=(e.clientX-rect.left-size/2)+'px';r.style.top=(e.clientY-rect.top-size/2)+'px';b.appendChild(r);setTimeout(()=>r.remove(),600);});
 
 async function getStatus() {
   document.getElementById('result').textContent = JSON.stringify(await api('/api/status'), null, 2);
@@ -579,7 +606,7 @@ async function unbanIp(id) {
 async function loadUsers(){ const d=await api('/api/users'); bridgeUsers=d.users||[]; renderUsers(); }
 function renderUsers(){ const q=(document.getElementById('userSearch')?.value||'').toLowerCase(); const data=bridgeUsers.filter(u=>!q||[u.id,u.username,u.displayName,u.globalName].some(x=>String(x||'').toLowerCase().includes(q))); let html='<table><tr><th>Пользователь</th><th>ID</th><th>Статус</th><th>Роли</th><th>Действия</th></tr>'; data.forEach(u=>{ let roles=(u.roles||[]).slice(0,4).map(r=>'<span class="pill">'+esc(r.name)+'</span>').join('')||'—'; let actions='<button class="blue" onclick="openProfile(\''+u.id+'\')">Профиль</button>'; if(myLevel>=50&&!u.bot) actions+='<button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить</button>'; html+='<tr class="userrow"><td onclick="openProfile(\''+u.id+'\')"><img class="avatar" src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"><b>'+esc(u.displayName||u.username)+'</b><div class="sub">@'+esc(u.username)+'</div></td><td>'+u.id+'</td><td>'+(u.bot?'🤖 Бот':'👤 Пользователь')+'</td><td>'+roles+'</td><td>'+actions+'</td></tr>'; }); html+='</table>'; document.getElementById('usersList').innerHTML=html; }
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-async function openProfile(id){ const r=await api('/api/users/'+id); if(r.error){alert(r.error);return;} const u=r.user, roles=r.roles||[]; document.querySelectorAll('[id^=tab-]').forEach(el=>el.classList.add('hidden')); document.getElementById('tab-profile').classList.remove('hidden'); let roleOpts=''; roles.forEach(x=>{roleOpts+='<label><input type="checkbox" class="urole" value="'+x.id+'" '+((u.roles||[]).some(rr=>rr.id===x.id)?'checked':'')+'> '+esc(x.name)+'</label>';}); const box=document.getElementById('profileBox'); box.innerHTML='<div class="card hero"><button class="ghost" onclick="showTab(\'users\')">← Назад</button><div class="profile" style="margin-top:20px"><img class="profileAvatar" src="'+(u.avatar||'')+'"><div><h2>'+esc(u.displayName||u.username)+'</h2><div class="sub">@'+esc(u.username)+' · '+u.id+'</div><div class="kv"><span>Создан</span><b>'+new Date(u.createdAt).toLocaleString('ru')+'</b></div><div class="kv"><span>Вступил</span><b>'+(u.joinedAt?new Date(u.joinedAt).toLocaleString('ru'):'—')+'</b></div><div class="kv"><span>Бот</span><b>'+(u.bot?'Да':'Нет')+'</b></div></div></div></div><div class="card"><h3>Редактирование профиля</h3><label>Никнейм<br><input id="editNick" value="'+esc(u.nickname||'')+'" maxlength="32"></label><h4>Роли</h4><div style="line-height:2">'+(roleOpts||'Нет ролей')+'</div><button class="green" onclick="saveUser(\''+u.id+'\')">💾 Сохранить изменения</button></div><div class="card dangerZone"><h3>Опасная зона</h3><p class="sub">Удаление пользователя = исключение с Discord-сервера.</p><button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить с сервера</button></div>'; }
+async function openProfile(id){ const r=await api('/api/users/'+id); if(r.error){alert(r.error);return;} const u=r.user, roles=r.roles||[]; document.querySelectorAll('[id^=tab-]').forEach(el=>el.classList.add('hidden')); document.getElementById('tab-profile').classList.remove('hidden'); let roleOpts=''; roles.forEach(x=>{roleOpts+='<label><input type="checkbox" class="urole" value="'+x.id+'" '+((u.roles||[]).some(rr=>rr.id===x.id)?'checked':'')+'> '+esc(x.name)+'</label>';}); const box=document.getElementById('profileBox'); box.innerHTML='<div class="card hero"><button class="ghost" onclick="showTab(\'users\', event)">← Назад</button><div class="profile" style="margin-top:20px"><img class="profileAvatar" src="'+(u.avatar||'')+'"><div><h2>'+esc(u.displayName||u.username)+'</h2><div class="sub">@'+esc(u.username)+' · '+u.id+'</div><div class="kv"><span>Создан</span><b>'+new Date(u.createdAt).toLocaleString('ru')+'</b></div><div class="kv"><span>Вступил</span><b>'+(u.joinedAt?new Date(u.joinedAt).toLocaleString('ru'):'—')+'</b></div><div class="kv"><span>Бот</span><b>'+(u.bot?'Да':'Нет')+'</b></div></div></div></div><div class="card"><h3>Редактирование профиля</h3><label>Никнейм<br><input id="editNick" value="'+esc(u.nickname||'')+'" maxlength="32"></label><h4>Роли</h4><div style="line-height:2">'+(roleOpts||'Нет ролей')+'</div><button class="green" onclick="saveUser(\''+u.id+'\')">💾 Сохранить изменения</button></div><div class="card dangerZone"><h3>Опасная зона</h3><p class="sub">Удаление пользователя = исключение с Discord-сервера.</p><button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить с сервера</button></div>'; }
 async function saveUser(id){const roles=[...document.querySelectorAll('.urole:checked')].map(x=>x.value); const r=await api('/api/users/'+id,'PATCH',{nickname:document.getElementById('editNick').value,roles}); alert(r.message||r.error||'Готово'); openProfile(id);}
 async function kickUser(id,name){if(!confirm('Удалить '+name+' с сервера?'))return;const r=await api('/api/users/'+id,'DELETE');alert(r.message||r.error);loadUsers();}
 async function loadDiscordRoles(){const d=await api('/api/discord-roles');bridgeDiscordRoles=d.roles||[];let h='<table><tr><th>Роль</th><th>ID</th><th>Участников</th><th>Цвет</th><th></th></tr>';bridgeDiscordRoles.forEach(r=>{let act=(!r.managed&&r.id!=='@everyone')?'<button class="red" onclick="deleteDiscordRole(\''+r.id+'\')">Удалить</button>':'';h+='<tr><td><b>'+esc(r.name)+'</b></td><td>'+r.id+'</td><td>'+(r.members||0)+'</td><td>'+esc(r.color||'—')+'</td><td>'+act+'</td></tr>';});h+='</table>';document.getElementById('drolesList').innerHTML=h;}
@@ -594,6 +621,7 @@ function renderLoginLogs(data){document.getElementById('loginCount').textContent
 function renderActionLogs(data){document.getElementById('actionCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(a,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(a.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(a.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot"></span>'+escHtml(a.action||'СОБЫТИЕ')+' <span class="badge">'+escHtml(a.username||'system')+'</span></div><div class="log-details" title="'+escHtml(a.details||'')+'">'+escHtml(a.details||'Без деталей')+'</div></div><div class="sub">ACTION</div></div>';});document.getElementById('actionsList').innerHTML=html;}
 async function loadLogs(){try{cachedLoginLogs=await api('/api/logs');renderLoginLogs(cachedLoginLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи входов',true);}}
 async function loadActions(){try{cachedActionLogs=await api('/api/actions');renderActionLogs(cachedActionLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи действий',true);}}
+showTab('main');
 </script>
 </body>
 </html>`);
