@@ -152,7 +152,7 @@ app.get('/auth/vk', (req,res)=>{
   if(!clientId) return res.status(503).send('<h2 style="font-family:system-ui;text-align:center;margin-top:15vh">VK ID авторизация ещё не настроена.</h2><p style="text-align:center">Добавьте VK_CLIENT_ID, VK_CLIENT_SECRET и VK_REDIRECT_URI в Render.</p>');
   const state = require('crypto').randomBytes(24).toString('hex');
   req.session.vkState = state;
-  const url = 'https://oauth.vk.com/authorize?' + new URLSearchParams({client_id:clientId,display:'page',redirect_uri:redirectUri,scope:'email',response_type:'code',v:'5.199',state}).toString();
+  const url = 'https://oauth.vk.com/authorize?' + new URLSearchParams({client_id:clientId,display:'page',redirect_uri:redirectUri,response_type:'code',v:'5.199',state}).toString();
   res.redirect(url);
 });
 
