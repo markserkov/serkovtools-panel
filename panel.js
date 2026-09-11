@@ -26,6 +26,8 @@ const PANEL_BRIDGE_SECRET = process.env.PANEL_BRIDGE_SECRET || '';
 let bridgeState = null;
 let bridgeSettings = null;
 let bridgeStats = null;
+let bridgeUsers = [];
+let bridgeDiscordRoles = [];
 let nextCommandId = 1;
 const commandQueue = [];
 
@@ -51,6 +53,8 @@ app.post('/bridge/poll', (req, res) => {
     if (body.state) bridgeState = body.state;
     if (body.settings) bridgeSettings = body.settings;
     if (body.stats) bridgeStats = body.stats;
+    if (Array.isArray(body.users)) bridgeUsers = body.users;
+    if (Array.isArray(body.discordRoles)) bridgeDiscordRoles = body.discordRoles;
     const commands = commandQueue.splice(0, commandQueue.length);
     res.json({ commands });
 });
@@ -121,7 +125,7 @@ if (rolesCount.c === 0) {
         ('Админ', 50, ?),
         ('Модератор', 10, ?)`,
         [
-            JSON.stringify(['view_status','toggle_antisliv','restart_bot','view_logs','manage_admins','manage_roles','view_stats','manage_ipbans']),
+            JSON.stringify(['view_status','toggle_antisliv','restart_bot','view_logs','manage_admins','manage_roles','view_stats','manage_ipbans','view_users','edit_users','delete_users','manage_discord_roles']),
             JSON.stringify(['view_status','toggle_antisliv','view_logs','view_stats']),
             JSON.stringify(['view_status','view_logs'])
         ]
@@ -137,6 +141,10 @@ if (!mainAdmin) {
         [ADMIN_USERNAME, hash, ownerRole.id]);
     console.log('[WEB] Главный админ создан');
 }
+
+await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Владелец'`, [JSON.stringify(['view_status','toggle_antisliv','restart_bot','view_logs','manage_admins','manage_roles','view_stats','manage_ipbans','view_users','edit_users','delete_users','manage_discord_roles'])]);
+await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Админ'`, [JSON.stringify(['view_status','toggle_antisliv','view_logs','view_stats','view_users','edit_users'])]);
+await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Модератор'`, [JSON.stringify(['view_status','view_logs','view_users'])]);
 
 // ---------- Анти-DDoS + Бан IP ----------
 const rateLimitMap = new Map();
@@ -288,36 +296,26 @@ app.get('/', requireAdmin, async (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Панель управления</title>
 <style>
-*{box-sizing:border-box}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0f0f13;color:#e5e7eb;margin:0;padding:20px}
-.container{max-width:1150px;margin:0 auto}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px}
-.card{background:#1a1a22;padding:20px;border-radius:14px;margin-bottom:18px;border:1px solid #2a2a35}
-h1{margin:0;font-size:1.6rem}h3{margin:0 0 14px}
-button{padding:9px 16px;margin:4px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500}
-.green{background:#22c55e;color:#000}.red{background:#ef4444;color:#fff}
-.blue{background:#3b82f6;color:#fff}.gray{background:#374151;color:#fff}.purple{background:#8b5cf6;color:#fff}
-pre{background:#111;padding:16px;border-radius:10px;overflow:auto;font-size:13px;line-height:1.45}
-table{width:100%;border-collapse:collapse;font-size:13.5px}
-th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #2e2e3a}
-th{color:#9ca3af;font-weight:600}
-input,select{padding:9px 12px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;margin:4px 0}
-.badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;background:#3b82f6}
-.tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
-.tab{padding:10px 18px;background:#1a1a22;border-radius:10px;cursor:pointer;border:1px solid #2a2a35}
-.tab.active{background:#3b82f6;border-color:#3b82f6}
-.hidden{display:none}
-.success{color:#22c55e}.fail{color:#ef4444}
-label{margin-right:14px;font-size:14px}
+:root{--bg:#09070f;--panel:rgba(19,14,34,.72);--panel2:rgba(28,20,48,.72);--line:rgba(196,181,253,.14);--text:#f7f3ff;--muted:#9f96b8;--accent:#8b5cf6;--accent2:#c084fc;--good:#34d399;--bad:#fb7185;--warn:#fbbf24}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 15% -10%,rgba(124,58,237,.35),transparent 32%),radial-gradient(circle at 105% 15%,rgba(192,132,252,.18),transparent 28%),#09070f;color:var(--text);margin:0;min-height:100vh;overflow-x:hidden}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(167,139,250,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(167,139,250,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,#000,transparent 85%);z-index:-1}
+.container{max-width:1320px;margin:0 auto;padding:30px 22px 70px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:15px;animation:fadeUp .55s ease both}.brand{display:flex;align-items:center;gap:14px}.logo{width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,#6366f1,#a855f7 55%,#d946ef);display:grid;place-items:center;font-size:25px;box-shadow:0 0 40px rgba(139,92,246,.32);animation:float 5s ease-in-out infinite}h1{margin:0;font-size:1.6rem;letter-spacing:-.02em}h2,h3{margin-top:0}.sub{color:var(--muted);font-size:13px;margin-top:4px}.card{position:relative;background:linear-gradient(145deg,rgba(31,22,55,.78),rgba(13,10,24,.72));padding:21px;border-radius:22px;margin-bottom:18px;border:1px solid var(--line);box-shadow:0 18px 60px rgba(0,0,0,.24);backdrop-filter:blur(18px);animation:fadeUp .42s ease both;transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease}.card:hover{border-color:rgba(196,181,253,.24);box-shadow:0 22px 70px rgba(0,0,0,.3)}.hero{padding:30px;background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(168,85,247,.13) 55%,rgba(217,70,239,.08));border-color:rgba(196,181,253,.2)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.stat{padding:18px;border-radius:18px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);transition:transform .25s ease,background .25s ease}.stat:hover{transform:translateY(-4px);background:rgba(139,92,246,.08)}.stat b{display:block;font-size:27px;color:#d8b4fe}.stat span{font-size:12px;color:var(--muted)}
+.tabs{display:flex;gap:8px;margin:18px 0 20px;flex-wrap:wrap;position:sticky;top:10px;z-index:20}.tab{padding:11px 16px;background:rgba(18,13,31,.78);border-radius:14px;cursor:pointer;border:1px solid rgba(196,181,253,.12);transition:all .25s cubic-bezier(.2,.8,.2,1);backdrop-filter:blur(16px);user-select:none}.tab:hover{transform:translateY(-2px);border-color:rgba(167,139,250,.45);background:rgba(38,25,64,.86)}.tab.active{background:linear-gradient(135deg,#6366f1,#a855f7);border-color:transparent;box-shadow:0 9px 30px rgba(124,58,237,.28);transform:translateY(-1px)}
+button{padding:10px 15px;margin:4px;border:0;border-radius:12px;cursor:pointer;font-size:13px;font-weight:700;color:#fff;transition:transform .2s ease,filter .2s ease,box-shadow .2s ease;position:relative;overflow:hidden}button:after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.14),transparent 75%);transform:translateX(-120%);transition:transform .55s ease}button:hover:after{transform:translateX(120%)}button:hover{transform:translateY(-2px);filter:brightness(1.08);box-shadow:0 8px 22px rgba(0,0,0,.2)}button:active{transform:translateY(0) scale(.98)}.green{background:linear-gradient(135deg,#059669,#10b981)}.red{background:linear-gradient(135deg,#be123c,#ef4444)}.blue{background:linear-gradient(135deg,#4f46e5,#7c3aed)}.gray{background:#29243b}.purple{background:linear-gradient(135deg,#7e22ce,#a855f7)}.cyan{background:linear-gradient(135deg,#0e7490,#06b6d4)}.ghost{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.12)}
+pre{background:#080611;padding:16px;border-radius:15px;overflow:auto;font-size:13px;line-height:1.5;border:1px solid rgba(255,255,255,.07)}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;overflow:hidden}th,td{padding:13px 11px;text-align:left;border-bottom:1px solid rgba(255,255,255,.065);vertical-align:middle}th{color:#a9a0bf;font-weight:650;text-transform:uppercase;font-size:10px;letter-spacing:.08em}tbody tr,.log-row{transition:background .2s ease,transform .2s ease}.userrow:hover,tbody tr:hover,.log-row:hover{background:rgba(139,92,246,.065)}
+input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba(167,139,250,.18);background:rgba(10,7,19,.78);color:#fff;margin:4px 0;outline:none;width:auto;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease}input:focus,select:focus,textarea:focus{border-color:#8b5cf6;box-shadow:0 0 0 4px rgba(139,92,246,.11);transform:translateY(-1px)}textarea{width:100%;min-height:90px}.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:11px;background:rgba(139,92,246,.17);color:#d8b4fe;border:1px solid rgba(196,181,253,.14)}.online{color:var(--good)}.offline{color:var(--bad)}.success{color:var(--good);font-weight:700}.fail{color:var(--bad);font-weight:700}.hidden{display:none!important}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.search{width:min(390px,100%)}.profile{display:grid;grid-template-columns:120px 1fr;gap:22px}.profileAvatar{width:110px;height:110px;border-radius:30px;object-fit:cover;background:#2b2348;box-shadow:0 12px 40px rgba(0,0,0,.25)}.kv{display:grid;grid-template-columns:150px 1fr;gap:8px;margin:8px 0}.kv span:first-child{color:var(--muted)}.pill{display:inline-block;margin:3px;padding:5px 9px;border-radius:9px;background:rgba(99,102,241,.14);font-size:11px}.dangerZone{border-color:rgba(239,68,68,.28);background:linear-gradient(145deg,rgba(127,29,29,.14),rgba(20,10,18,.6))}
+.log-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.log-toolbar input{flex:1;min-width:190px}.log-list{display:grid;gap:9px}.log-row{display:grid;grid-template-columns:155px 1fr auto;gap:14px;align-items:center;padding:14px 15px;border:1px solid rgba(255,255,255,.065);border-radius:15px;background:rgba(255,255,255,.025);animation:logIn .32s ease both}.log-main{min-width:0}.log-title{font-weight:750;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.log-details{color:var(--muted);font-size:12px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-time{font-size:11px;color:#9f96b8}.log-ip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#c4b5fd}.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--good);box-shadow:0 0 12px rgba(52,211,153,.7)}.status-dot.bad{background:var(--bad);box-shadow:0 0 12px rgba(251,113,133,.6)}.empty{padding:35px;text-align:center;color:var(--muted);border:1px dashed rgba(196,181,253,.14);border-radius:16px}.toast{position:fixed;right:22px;bottom:22px;z-index:1000;min-width:240px;max-width:380px;padding:14px 16px;border:1px solid rgba(196,181,253,.18);border-radius:15px;background:rgba(20,14,34,.94);box-shadow:0 18px 55px rgba(0,0,0,.38);backdrop-filter:blur(18px);animation:toastIn .3s ease}.toast.bad{border-color:rgba(251,113,133,.3)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@keyframes logIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}@keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.log-row{grid-template-columns:1fr}.log-ip{text-align:left}}@media(max-width:800px){.profile{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}table{display:block;overflow-x:auto;white-space:nowrap}.tabs{position:static}}@media(max-width:520px){.container{padding:18px 12px}.grid{grid-template-columns:1fr 1fr}.header{align-items:flex-start}.brand{align-items:flex-start}.logo{width:44px;height:44px}.toast{left:12px;right:12px;bottom:12px}}
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
-    <div>
-      <h1>🛠 Панель бота</h1>
-      <div style="margin-top:6px;opacity:.85">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> (ур. ${admin.level || 0})</div>
-    </div>
+    <div class="brand"><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> (ур. ${admin.level || 0})</div>
+    </div></div>
     <a href="/logout"><button class="gray">Выйти</button></a>
   </div>
 
@@ -327,6 +325,8 @@ label{margin-right:14px;font-size:14px}
     ${hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'admins\')">Админы</div>' : ''}
     ${hasPermission(admin,'manage_roles') ? '<div class="tab" onclick="showTab(\'roles\')">Уровни</div>' : ''}
     ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<div class="tab" onclick="showTab(\'ipbans\')">Баны IP</div>' : ''}
+    ${hasPermission(admin,'view_users') ? '<div class="tab" onclick="showTab(\'users\')">Пользователи</div>' : ''}
+    ${hasPermission(admin,'manage_discord_roles') ? '<div class="tab" onclick="showTab(\'droles\')">Роли Discord</div>' : ''}
     ${hasPermission(admin,'view_logs') ? '<div class="tab" onclick="showTab(\'logs\')">Логи</div>' : ''}
   </div>
 
@@ -383,6 +383,7 @@ label{margin-right:14px;font-size:14px}
         <label><input type="checkbox" value="manage_roles"> Уровни</label>
         <label><input type="checkbox" value="view_stats"> Статистика</label>
         <label><input type="checkbox" value="manage_ipbans"> Баны IP</label>
+        <label><input type="checkbox" value="view_users"> Пользователи</label><label><input type="checkbox" value="edit_users"> Изменение пользователей</label><label><input type="checkbox" value="delete_users"> Удаление пользователей</label><label><input type="checkbox" value="manage_discord_roles"> Роли Discord</label>
       </div>
       <button class="green" onclick="createRole()">Создать уровень</button>
     </div>
@@ -398,24 +399,36 @@ label{margin-right:14px;font-size:14px}
       <button class="red" onclick="banIp()">Забанить</button>
     </div>
     <div class="card">
-      <h3>Забаненные IP</h3>
-      <button class="blue" onclick="loadIpBans()">Обновить</button>
+      <h3>Забаненные IP <span class="badge" id="ipBanCount">0</span></h3>
+      <div class="log-toolbar"><input id="ipBanSearch" placeholder="Поиск IP или причине..." oninput="filterIpBans()"><button class="blue" onclick="loadIpBans()">↻ Обновить</button></div>
       <div id="ipBansList" style="margin-top:14px"></div>
     </div>
   </div>
 
+  <!-- ПОЛЬЗОВАТЕЛИ -->
+  <div id="tab-users" class="hidden">
+    <div class="card hero"><h2>Пользователи сервера</h2><div class="sub">Открой профиль пользователя, чтобы посмотреть и изменить доступные данные.</div><div class="toolbar" style="margin-top:15px"><input class="search" id="userSearch" placeholder="Поиск по имени, ID или никнейму" oninput="renderUsers()"><button class="blue" onclick="loadUsers()">↻ Обновить</button></div></div>
+    <div class="card"><div id="usersList">Загрузка...</div></div>
+  </div>
+
+  <!-- ПРОФИЛЬ -->
+  <div id="tab-profile" class="hidden"><div id="profileBox"></div></div>
+
+  <!-- DISCORD РОЛИ -->
+  <div id="tab-droles" class="hidden">
+    <div class="card hero"><h2>Роли Discord</h2><div class="sub">Создание, изменение и удаление серверных ролей.</div></div>
+    <div class="card"><h3>Создать роль</h3><input id="droleName" placeholder="Название роли"><input id="droleColor" placeholder="Цвет #8b5cf6"><label><input type="checkbox" id="droleHoist"> Показывать отдельно</label><button class="green" onclick="createDiscordRole()">Создать роль</button></div>
+    <div class="card"><div id="drolesList">Загрузка...</div></div>
+  </div>
+
   <!-- ЛОГИ -->
   <div id="tab-logs" class="hidden">
-    <div class="card">
-      <h3>Логи входов</h3>
-      <button class="blue" onclick="loadLogs()">Обновить логи входов</button>
-      <div id="logsList" style="margin-top:14px"></div>
+    <div class="card hero">
+      <h2>Журнал событий</h2><div class="sub">Входы, действия администраторов и безопасность в одном месте.</div>
+      <div class="log-toolbar"><input id="logSearch" placeholder="Поиск по логам..." oninput="filterLogs()"><select id="logType" onchange="filterLogs()"><option value="all">Все события</option><option value="login">Входы</option><option value="action">Действия</option></select><button class="blue" onclick="loadLogs();loadActions()">↻ Обновить</button></div>
     </div>
-    <div class="card">
-      <h3>Логи действий</h3>
-      <button class="blue" onclick="loadActions()">Обновить логи действий</button>
-      <div id="actionsList" style="margin-top:14px"></div>
-    </div>
+    <div class="card"><h3>Логи входов <span class="badge" id="loginCount">0</span></h3><div id="logsList" class="log-list"></div></div>
+    <div class="card"><h3>Логи действий <span class="badge" id="actionCount">0</span></h3><div id="actionsList" class="log-list"></div></div>
   </div>
 </div>
 
@@ -432,6 +445,8 @@ function showTab(name, ev) {
   if (name === 'logs') { loadLogs(); loadActions(); }
   if (name === 'antisliv') loadAntiSliv();
   if (name === 'ipbans') loadIpBans();
+  if (name === 'users') loadUsers();
+  if (name === 'droles') loadDiscordRoles();
 }
 
 async function api(url, method='GET', body=null) {
@@ -524,14 +539,15 @@ async function deleteAdmin(id) {
 
 async function loadRoles() {
   const data = await api('/api/roles');
-  let html = '<table><tr><th>Название</th><th>Уровень</th><th>Права</th></tr>';
+  let html = '<table><tr><th>Название</th><th>Уровень</th><th>Права</th><th></th></tr>';
   data.forEach(r => {
     const p = JSON.parse(r.permissions||'[]');
-    html += \`<tr><td>\${r.name}</td><td>\${r.level}</td><td>\${p.join(', ')}</td></tr>\`;
+    html += '<tr><td>'+esc(r.name)+'</td><td>'+r.level+'</td><td>'+esc(p.join(', '))+'</td><td>'+(r.name !== 'Владелец' ? '<button class="red" onclick="deleteWebRole('+r.id+')">Удалить</button>' : '')+'</td></tr>';
   });
   html += '</table>';
   document.getElementById('rolesList').innerHTML = html;
 }
+async function deleteWebRole(id){if(!confirm('Удалить роль?'))return;const r=await api('/api/roles/'+id,'DELETE');alert(r.message||r.error);loadRoles();}
 async function createRole() {
   const permissions = [...document.querySelectorAll('#tab-roles input[type=checkbox]:checked')].map(c=>c.value);
   const res = await api('/api/roles','POST',{
@@ -542,60 +558,42 @@ async function createRole() {
   alert(res.message || res.error); loadRoles();
 }
 
-async function loadIpBans() {
-  const data = await api('/api/ipbans');
-  let html = '<table><tr><th>IP</th><th>Причина</th><th>Кто забанил</th><th>Дата</th><th></th></tr>';
-  data.forEach(b => {
-    html += \`<tr><td>\${b.ip}</td><td>\${b.reason||'—'}</td><td>\${b.banned_by}</td>
-      <td>\${new Date(b.created_at).toLocaleString('ru')}</td>
-      <td><button class="green" onclick="unbanIp(\${b.id})">Разбанить</button></td></tr>\`;
-  });
-  html += '</table>';
-  document.getElementById('ipBansList').innerHTML = html;
-}
+let cachedIpBans=[];
+function renderIpBans(data){document.getElementById('ipBanCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Заблокированных IP не найдено</div>';else{html='<table><tr><th>IP</th><th>Причина</th><th>Кто забанил</th><th>Дата</th><th>Действие</th></tr>';data.forEach(function(b){html+='<tr><td><span class="badge">'+esc(b.ip)+'</span></td><td>'+esc(b.reason||'—')+'</td><td>'+esc(b.banned_by||'—')+'</td><td>'+new Date(b.created_at).toLocaleString('ru')+'</td><td><button class="green" onclick="unbanIp('+b.id+')">🔓 Разбанить</button></td></tr>';});html+='</table>';}document.getElementById('ipBansList').innerHTML=html;}
+function filterIpBans(){const q=(document.getElementById('ipBanSearch')?.value||'').toLowerCase();renderIpBans(cachedIpBans.filter(function(b){return [b.ip,b.reason,b.banned_by].some(function(x){return String(x||'').toLowerCase().includes(q);});}));}
+async function loadIpBans(){try{cachedIpBans=await api('/api/ipbans');renderIpBans(cachedIpBans);filterIpBans();}catch(e){showToast('Не удалось загрузить список IP',true);}}
 async function banIp() {
   const res = await api('/api/ipbans','POST',{
     ip: document.getElementById('banIp').value.trim(),
     reason: document.getElementById('banReason').value.trim()
   });
-  alert(res.message || res.error); loadIpBans();
+  showToast(res.message || res.error || 'Готово', !res.message); loadIpBans();
 }
 async function unbanIp(id) {
-  if (!confirm('Разбанить IP?')) return;
-  await api('/api/ipbans/'+id,'DELETE'); loadIpBans();
+  if (!confirm('Разбанить этот IP? Доступ к панели будет снова разрешён.')) return;
+  const r=await api('/api/ipbans/'+id,'DELETE');
+  showToast(r.message||'IP успешно разбанен');
+  loadIpBans();
 }
 
-async function loadLogs() {
-  const data = await api('/api/logs');
-  let html = '<table><tr><th>Время</th><th>Логин</th><th>IP</th><th>Устройство / Браузер</th><th>Результат</th></tr>';
-  data.forEach(l => {
-    html += \`<tr>
-      <td>\${new Date(l.created_at).toLocaleString('ru')}</td>
-      <td>\${l.username||'—'}</td>
-      <td>\${l.ip||'—'}</td>
-      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis" title="\${l.user_agent||''}">\${(l.user_agent||'—').substring(0,70)}</td>
-      <td class="\${l.success?'success':'fail'}">\${l.success?'✅ Успех':'❌ Ошибка'}</td>
-    </tr>\`;
-  });
-  html += '</table>';
-  document.getElementById('logsList').innerHTML = html;
-}
+async function loadUsers(){ const d=await api('/api/users'); bridgeUsers=d.users||[]; renderUsers(); }
+function renderUsers(){ const q=(document.getElementById('userSearch')?.value||'').toLowerCase(); const data=bridgeUsers.filter(u=>!q||[u.id,u.username,u.displayName,u.globalName].some(x=>String(x||'').toLowerCase().includes(q))); let html='<table><tr><th>Пользователь</th><th>ID</th><th>Статус</th><th>Роли</th><th>Действия</th></tr>'; data.forEach(u=>{ let roles=(u.roles||[]).slice(0,4).map(r=>'<span class="pill">'+esc(r.name)+'</span>').join('')||'—'; let actions='<button class="blue" onclick="openProfile(\''+u.id+'\')">Профиль</button>'; if(myLevel>=50&&!u.bot) actions+='<button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить</button>'; html+='<tr class="userrow"><td onclick="openProfile(\''+u.id+'\')"><img class="avatar" src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"><b>'+esc(u.displayName||u.username)+'</b><div class="sub">@'+esc(u.username)+'</div></td><td>'+u.id+'</td><td>'+(u.bot?'🤖 Бот':'👤 Пользователь')+'</td><td>'+roles+'</td><td>'+actions+'</td></tr>'; }); html+='</table>'; document.getElementById('usersList').innerHTML=html; }
+function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+async function openProfile(id){ const r=await api('/api/users/'+id); if(r.error){alert(r.error);return;} const u=r.user, roles=r.roles||[]; document.querySelectorAll('[id^=tab-]').forEach(el=>el.classList.add('hidden')); document.getElementById('tab-profile').classList.remove('hidden'); let roleOpts=''; roles.forEach(x=>{roleOpts+='<label><input type="checkbox" class="urole" value="'+x.id+'" '+((u.roles||[]).some(rr=>rr.id===x.id)?'checked':'')+'> '+esc(x.name)+'</label>';}); const box=document.getElementById('profileBox'); box.innerHTML='<div class="card hero"><button class="ghost" onclick="showTab(\'users\')">← Назад</button><div class="profile" style="margin-top:20px"><img class="profileAvatar" src="'+(u.avatar||'')+'"><div><h2>'+esc(u.displayName||u.username)+'</h2><div class="sub">@'+esc(u.username)+' · '+u.id+'</div><div class="kv"><span>Создан</span><b>'+new Date(u.createdAt).toLocaleString('ru')+'</b></div><div class="kv"><span>Вступил</span><b>'+(u.joinedAt?new Date(u.joinedAt).toLocaleString('ru'):'—')+'</b></div><div class="kv"><span>Бот</span><b>'+(u.bot?'Да':'Нет')+'</b></div></div></div></div><div class="card"><h3>Редактирование профиля</h3><label>Никнейм<br><input id="editNick" value="'+esc(u.nickname||'')+'" maxlength="32"></label><h4>Роли</h4><div style="line-height:2">'+(roleOpts||'Нет ролей')+'</div><button class="green" onclick="saveUser(\''+u.id+'\')">💾 Сохранить изменения</button></div><div class="card dangerZone"><h3>Опасная зона</h3><p class="sub">Удаление пользователя = исключение с Discord-сервера.</p><button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить с сервера</button></div>'; }
+async function saveUser(id){const roles=[...document.querySelectorAll('.urole:checked')].map(x=>x.value); const r=await api('/api/users/'+id,'PATCH',{nickname:document.getElementById('editNick').value,roles}); alert(r.message||r.error||'Готово'); openProfile(id);}
+async function kickUser(id,name){if(!confirm('Удалить '+name+' с сервера?'))return;const r=await api('/api/users/'+id,'DELETE');alert(r.message||r.error);loadUsers();}
+async function loadDiscordRoles(){const d=await api('/api/discord-roles');bridgeDiscordRoles=d.roles||[];let h='<table><tr><th>Роль</th><th>ID</th><th>Участников</th><th>Цвет</th><th></th></tr>';bridgeDiscordRoles.forEach(r=>{let act=(!r.managed&&r.id!=='@everyone')?'<button class="red" onclick="deleteDiscordRole(\''+r.id+'\')">Удалить</button>':'';h+='<tr><td><b>'+esc(r.name)+'</b></td><td>'+r.id+'</td><td>'+(r.members||0)+'</td><td>'+esc(r.color||'—')+'</td><td>'+act+'</td></tr>';});h+='</table>';document.getElementById('drolesList').innerHTML=h;}
+async function createDiscordRole(){const r=await api('/api/discord-roles','POST',{name:document.getElementById('droleName').value,color:document.getElementById('droleColor').value,hoist:document.getElementById('droleHoist').checked});alert(r.message||r.error);loadDiscordRoles();}
+async function deleteDiscordRole(id){if(!confirm('Удалить роль Discord?'))return;const r=await api('/api/discord-roles/'+id,'DELETE');alert(r.message||r.error);loadDiscordRoles();}
 
-async function loadActions() {
-  const data = await api('/api/actions');
-  let html = '<table><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Детали</th><th>IP</th></tr>';
-  data.forEach(a => {
-    html += \`<tr>
-      <td>\${new Date(a.created_at).toLocaleString('ru')}</td>
-      <td>\${a.username||'—'}</td>
-      <td>\${a.action}</td>
-      <td>\${a.details||'—'}</td>
-      <td>\${a.ip||'—'}</td>
-    </tr>\`;
-  });
-  html += '</table>';
-  document.getElementById('actionsList').innerHTML = html;
-}
+let cachedLoginLogs=[]; let cachedActionLogs=[];
+function escHtml(v){return String(v??'').replace(/[&<>'"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c];});}
+function showToast(message,bad){const old=document.querySelector('.toast');if(old)old.remove();const t=document.createElement('div');t.className='toast'+(bad?' bad':'');t.textContent=message;document.body.appendChild(t);setTimeout(function(){t.remove();},3200);}
+function filterLogs(){const q=(document.getElementById('logSearch')?.value||'').toLowerCase();const type=document.getElementById('logType')?.value||'all';const cards=document.querySelectorAll('#tab-logs .card');if(cards[1])cards[1].style.display=type==='action'?'none':'block';if(cards[2])cards[2].style.display=type==='login'?'none':'block';renderLoginLogs(cachedLoginLogs.filter(function(x){return JSON.stringify(x).toLowerCase().includes(q);}));renderActionLogs(cachedActionLogs.filter(function(x){return JSON.stringify(x).toLowerCase().includes(q);}));}
+function renderLoginLogs(data){document.getElementById('loginCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(l,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(l.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(l.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot '+(l.success?'':'bad')+'"></span>'+escHtml(l.username||'—')+' <span class="badge">'+(l.success?'Успешный вход':'Ошибка входа')+'</span></div><div class="log-details" title="'+escHtml(l.user_agent||'')+'">'+escHtml(l.user_agent||'Устройство не определено')+'</div></div><div class="'+(l.success?'success':'fail')+'">'+(l.success?'OK':'FAIL')+'</div></div>';});document.getElementById('logsList').innerHTML=html;}
+function renderActionLogs(data){document.getElementById('actionCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(a,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(a.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(a.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot"></span>'+escHtml(a.action||'СОБЫТИЕ')+' <span class="badge">'+escHtml(a.username||'system')+'</span></div><div class="log-details" title="'+escHtml(a.details||'')+'">'+escHtml(a.details||'Без деталей')+'</div></div><div class="sub">ACTION</div></div>';});document.getElementById('actionsList').innerHTML=html;}
+async function loadLogs(){try{cachedLoginLogs=await api('/api/logs');renderLoginLogs(cachedLoginLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи входов',true);}}
+async function loadActions(){try{cachedActionLogs=await api('/api/actions');renderActionLogs(cachedActionLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи действий',true);}}
 </script>
 </body>
 </html>`);
@@ -697,6 +695,10 @@ app.post('/api/roles', requirePermission('manage_roles'), async (req, res) => {
     }
 });
 
+
+app.patch('/api/roles/:id', requirePermission('manage_roles'), async (req,res)=>{const row=await db.get('SELECT * FROM web_roles WHERE id=?',[req.params.id]);if(!row)return res.status(404).json({error:'Роль не найдена'});if(req.body.name)await db.run('UPDATE web_roles SET name=? WHERE id=?',[String(req.body.name),req.params.id]);if(req.body.level!==undefined)await db.run('UPDATE web_roles SET level=? WHERE id=?',[Number(req.body.level)||1,req.params.id]);if(Array.isArray(req.body.permissions))await db.run('UPDATE web_roles SET permissions=? WHERE id=?',[JSON.stringify(req.body.permissions),req.params.id]);await logAction(req.session.username,'EDIT_ROLE',`Изменена веб-роль ${row.name}`,getClientIp(req));res.json({message:'Роль изменена'});});
+app.delete('/api/roles/:id', requirePermission('manage_roles'), async (req,res)=>{const row=await db.get('SELECT * FROM web_roles WHERE id=?',[req.params.id]);if(!row)return res.status(404).json({error:'Роль не найдена'});if(row.name==='Владелец')return res.status(400).json({error:'Нельзя удалить роль Владелец'});await db.run('UPDATE web_admins SET role_id=NULL WHERE role_id=?',[req.params.id]);await db.run('DELETE FROM web_roles WHERE id=?',[req.params.id]);await logAction(req.session.username,'DELETE_ROLE',`Удалена веб-роль ${row.name}`,getClientIp(req));res.json({message:'Роль удалена'});});
+
 app.get('/api/ipbans', requirePermission('manage_ipbans'), async (req, res) => {
     const rows = await db.all(`SELECT * FROM web_ip_bans ORDER BY id DESC`);
     res.json(rows);
@@ -716,11 +718,21 @@ app.post('/api/ipbans', requirePermission('manage_ipbans'), async (req, res) => 
 });
 
 app.delete('/api/ipbans/:id', requirePermission('manage_ipbans'), async (req, res) => {
+    const row = await db.get(`SELECT ip FROM web_ip_bans WHERE id = ?`, [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'IP не найден' });
     await db.run(`DELETE FROM web_ip_bans WHERE id = ?`, [req.params.id]);
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     await logAction(req.session.username, 'UNBAN_IP', `Разбанен ID ${req.params.id}`, ip);
-    res.json({ ok: true });
+    res.json({ ok: true, message: `IP ${row.ip} разблокирован`, ip: row.ip });
 });
+
+app.get('/api/users', requirePermission('view_users'), (req,res)=>res.json({users:bridgeUsers}));
+app.get('/api/users/:id', requirePermission('view_users'), (req,res)=>{ const u=bridgeUsers.find(x=>x.id===req.params.id); if(!u)return res.status(404).json({error:'Пользователь не найден'}); res.json({user:u,roles:bridgeDiscordRoles}); });
+app.patch('/api/users/:id', requirePermission('edit_users'), async (req,res)=>{ const cmd=queueCommand('edit_user',{userId:String(req.params.id),nickname:String(req.body.nickname||''),roles:Array.isArray(req.body.roles)?req.body.roles.map(String):[]}); await logAction(req.session.username,'EDIT_USER',`Изменён пользователь ${req.params.id}`,getClientIp(req)); res.json({message:'Изменения отправлены боту',commandId:cmd.id}); });
+app.delete('/api/users/:id', requirePermission('delete_users'), async (req,res)=>{ const cmd=queueCommand('kick_user',{userId:String(req.params.id)}); await logAction(req.session.username,'DELETE_USER',`Удалён пользователь ${req.params.id}`,getClientIp(req)); res.json({message:'Команда на удаление отправлена',commandId:cmd.id}); });
+app.get('/api/discord-roles', requirePermission('manage_discord_roles'), (req,res)=>res.json({roles:bridgeDiscordRoles}));
+app.post('/api/discord-roles', requirePermission('manage_discord_roles'), async (req,res)=>{if(!req.body.name)return res.status(400).json({error:'Укажите название'});const cmd=queueCommand('create_role',{name:String(req.body.name).slice(0,100),color:String(req.body.color||''),hoist:!!req.body.hoist});await logAction(req.session.username,'CREATE_DISCORD_ROLE',`Создание роли ${req.body.name}`,getClientIp(req));res.json({message:'Команда отправлена',commandId:cmd.id});});
+app.delete('/api/discord-roles/:id', requirePermission('manage_discord_roles'), async (req,res)=>{const cmd=queueCommand('delete_role',{roleId:String(req.params.id)});await logAction(req.session.username,'DELETE_DISCORD_ROLE',`Удаление роли ${req.params.id}`,getClientIp(req));res.json({message:'Команда отправлена',commandId:cmd.id});});
 
 app.listen(WEB_PORT, () => {
     console.log(`[WEB] Панель запущена на порту ${WEB_PORT}`);
