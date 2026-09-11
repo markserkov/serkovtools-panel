@@ -1,252 +1,76 @@
+const ADMIN = window.__ADMIN__ || {};
+let cachedAdmins=[];
+let cachedStats={};
+let cachedWeek='';
 
-const myLevel = Number(document.body.dataset.myLevel || 0);
+async function api(url,method='GET',body=null){
+  try{const o={method,headers:{'Content-Type':'application/json','Accept':'application/json'},credentials:'include'};if(body!==null)o.body=JSON.stringify(body);const r=await fetch(url,o);const t=await r.text();let d={};try{d=t?JSON.parse(t):{};}catch{d={error:t||`Ошибка ${r.status}`};}if(r.status===401){location.href='/login';return {error:'Не авторизован'};}if(!r.ok&&!d.error)d.error=`Ошибка ${r.status}`;return d;}catch(e){console.error(e);toast('Нет соединения с сервером',true);return {error:'Нет соединения с сервером'};}}
+function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function toast(msg,bad=false){const old=document.querySelector('.toast');old?.remove();const x=document.createElement('div');x.className='toast'+(bad?' bad':'');x.textContent=msg;document.body.appendChild(x);setTimeout(()=>x.remove(),3200);}
+function showPage(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.navBtn').forEach(x=>x.classList.toggle('active',x.dataset.page===name));if(name==='me')loadMine();if(name==='admins')loadAdmins();closeSidebar();try{scrollTo({top:0,behavior:'smooth'});}catch{scrollTo(0,0);}}
+function openSidebar(){document.getElementById('sidebar')?.classList.add('open');document.getElementById('sidebarOverlay')?.classList.add('open');}
+function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');}
+function formatDate(v){if(!v)return '—';return new Date(v).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function fmtStatus(s){return s==='online'?'<span class="online">● Онлайн</span>':'<span class="offline">● Оффлайн</span>';}
 
-function toggleSidebar(ev){if(ev)ev.stopPropagation();const s=document.getElementById('sidebar'),o=document.getElementById('sidebarOverlay'),b=document.getElementById('menuOpenBtn');if(!s||!o)return;const open=!s.classList.contains('open');s.classList.toggle('open',open);o.classList.toggle('open',open);document.body.classList.toggle('menu-open',open);if(b)b.setAttribute('aria-expanded',open?'true':'false');}
-function closeSidebar(){document.getElementById('sidebar')?.classList.remove('open');document.getElementById('sidebarOverlay')?.classList.remove('open');document.body.classList.remove('menu-open');document.getElementById('menuOpenBtn')?.setAttribute('aria-expanded','false');}
-function showTab(name, ev) {
-  const target=document.getElementById('tab-' + name);
-  if(!target){if(typeof showToast==='function')showToast('Раздел недоступен',true);return false;}
-  document.querySelectorAll('[id^=tab-]').forEach(el => el.classList.add('hidden'));
-  target.classList.remove('hidden');
-  document.querySelectorAll('.sideItem').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-  closeSidebar();
-  if(ev && ev.currentTarget) ev.currentTarget.blur?.();
-  try { window.scrollTo({top:0,behavior:'smooth'}); } catch(_) { window.scrollTo(0,0); }
-  try {
-    if (name === 'admins') loadAdmins();
-    if (name === 'roles') loadRoles();
-    if (name === 'logs') { loadLogs(); loadActions(); }
-    if (name === 'antisliv') loadAntiSliv();
-    if (name === 'ipbans') loadIpBans();
-    if (name === 'users') loadUsers();
-    if (name === 'droles') loadDiscordRoles();
-  } catch(e){showToast('Не удалось открыть раздел',true);console.error(e);}
+async function loadMine(){
+  const d=await api('/api/admins'); if(d.error)return;
+  cachedAdmins=d.admins||[];cachedStats=d.stats||{};cachedWeek=d.week||'';
+  const me=cachedAdmins.find(x=>Number(x.id)===Number(ADMIN.id));
+  const count=me?(cachedStats[String(me.discord_id)]||0):0;
+  document.getElementById('myMessages').textContent=count;
+  document.getElementById('weekLabel').textContent=cachedWeek?cachedWeek.split(' / ')[0]:'—';
+  document.getElementById('updatedAt').textContent=bridgeUpdatedAt?formatDate(bridgeUpdatedAt):'—';
+  await loadStatus(false);
 }
-
-async function api(url, method='GET', body=null) {
-  try {
-    const opts = { method, headers: {'Content-Type':'application/json','Accept':'application/json'}, credentials:'include' };
-    if (body !== null) opts.body = JSON.stringify(body);
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    let data; try { data = text ? JSON.parse(text) : {}; } catch { data = {error:text || 'Сервер вернул некорректный ответ'}; }
-    if(res.status===401){showToast('Сессия закончилась. Войдите снова.',true);setTimeout(()=>location.href='/login',700);return {error:'Не авторизован'};}
-    if(!res.ok && !data.error) data.error='Ошибка запроса ('+res.status+')';
-    return data;
-  } catch(e){ console.error(e); showToast('Нет соединения с сервером',true); return {error:'Нет соединения с сервером'}; }
-}
-
-// Единый ripple-эффект и обработка Enter для быстрых форм.
-document.addEventListener('click',function(e){const b=e.target.closest('button');if(!b||b.disabled)return;const r=document.createElement('span');r.className='ripple';const rect=b.getBoundingClientRect();const size=Math.max(rect.width,rect.height);r.style.width=r.style.height=size+'px';r.style.left=(e.clientX-rect.left-size/2)+'px';r.style.top=(e.clientY-rect.top-size/2)+'px';b.appendChild(r);setTimeout(()=>r.remove(),600);});
-
-async function getStatus() {
-  const d=await api('/api/status');
-  document.getElementById('result').textContent=JSON.stringify(d,null,2);
-  if(!d.error) renderDashboardStats({state:d,guild:d.guild||{},attempts:d.attempts||{}});
-}
-async function toggleAntiSliv() {
-  document.getElementById('result').textContent = JSON.stringify(await api('/api/antisliv/toggle','POST'), null, 2);
-}
-async function restartBot() {
-  if (!confirm('Точно перезапустить бота?')) return;
-  document.getElementById('result').textContent = JSON.stringify(await api('/api/restart','POST'), null, 2);
-}
-async function getStats() {
-  const d = await api('/api/stats');
-  if (d.error) { showToast(d.error,true); return; }
-  renderDashboardStats(d);
-  document.getElementById('result').textContent = JSON.stringify(d, null, 2);
+let bridgeUpdatedAt=null;let lastStats={};
+async function loadStatus(show=true){
+  const d=await api('/api/status');if(d.error){if(show)toast(d.error,true);return;}
+  bridgeUpdatedAt=new Date();
+  const g=d.guild||{};
+  const cells=[['Discord',d.discord],['VK',d.vk],['Telegram',d.telegram],['Anti-Sliv',d.antiSliv?'online':'offline']];
+  document.getElementById('statusGrid').innerHTML=cells.map(([n,s])=>`<div class="status"><small>${n}</small><b>${fmtStatus(s)}</b></div>`).join('')+`<div style="grid-column:1/-1;color:var(--muted);padding:4px 2px">Ping: <b style="color:#fff">${d.ping==null?'—':esc(d.ping+' ms')}</b> · Uptime: <b style="color:#fff">${esc(fmtUptime(d.uptime))}</b> · Сервер: <b style="color:#fff">${esc(g.name||'Discord')}</b></div>`;
+  if(show)toast('Статус обновлён');
+  return d;
 }
 function fmtUptime(sec){sec=Number(sec)||0;const d=Math.floor(sec/86400);sec%=86400;const h=Math.floor(sec/3600);sec%=3600;const m=Math.floor(sec/60);return (d?d+'д ':'')+String(h).padStart(2,'0')+'ч '+String(m).padStart(2,'0')+'м';}
-function renderDashboardStats(d){
-  const st=d.state||{}; const g=d.guild||{}; const attempts=d.attempts||{};
-  const stat=document.getElementById('dashboardStats'); if(stat){stat.innerHTML=[
-    ['👥','Участники',g.members||st.members||0,g.humans!=null?`Людей: ${g.humans}`:''],
-    ['🤖','Боты',g.bots||0,'Discord'],
-    ['🟢','Онлайн',g.online||0,'В сети'],
-    ['💎','Бусты',g.boosts||0,g.boostTier?`Уровень ${g.boostTier}`:''],
-    ['🎭','Роли',g.roles||0,'Discord'],
-    ['💬','Каналы',g.channels||0,'Discord'],
-    ['🛡','Попытки сегодня',attempts.total||0,`Лимит: ${attempts.limit||st.maxAttempts||0}`],
-    ['⚠️','Достигли лимита',attempts.reached||0,'Anti-Sliv']
-  ].map(x=>`<div class="stat"><div class="statIcon">${x[0]}</div><b>${esc(x[2])}</b><div class="statMeta">${esc(x[1])}${x[3]?` · ${esc(x[3])}`:''}</div></div>`).join('');}
-  const box=document.getElementById('dashboardStatus'); if(box){const svc=[['Discord',st.discord],['VK',st.vk],['Telegram',st.telegram],['Anti-Sliv',st.antiSliv?'online':'offline']];box.innerHTML=`<div class="statusGrid">${svc.map(x=>`<div class="statusBox"><div class="label">${x[0]}</div><div class="value ${x[1]==='online'?'statusOnline':'statusOffline'}">${x[1]==='online'?'● Онлайн':'● Оффлайн'}</div></div>`).join('')}</div><div class="sub" style="margin-top:12px">Ping: <b>${st.ping==null?'—':esc(st.ping+' ms')}</b> · Uptime: <b>${fmtUptime(st.uptime)}</b> · Сервер: <b>${esc(g.name||'Discord')}</b></div>`; }
+async function openStats(){
+  const d=await api('/api/stats');if(d.error){toast(d.error,true);return;}lastStats=d;const g=d.guild||{},a=d.attempts||{};
+  const items=[['Участники',g.members||0],['Люди',g.humans||0],['Боты',g.bots||0],['Онлайн',g.online||0],['Каналы',g.channels||0],['Роли',g.roles||0],['Бусты',g.boosts||0],['Anti-Sliv сегодня',a.total||0]];
+  document.getElementById('modalStats').innerHTML=items.map(x=>`<div class="modalStat"><small>${x[0]}</small><b>${esc(x[1])}</b></div>`).join('')+`<div class="modalStat"><small>Период сообщений</small><b>${esc(d.week||'—')}</b></div><div class="modalStat"><small>Обновление</small><b>каждые 6 ч МСК</b></div>`;
+  document.getElementById('statsModal').classList.add('open');
 }
-async function refreshDashboard(){const d=await api('/api/stats');if(d.error){showToast(d.error,true);return;}renderDashboardStats(d);showToast('Статистика обновлена');}
+function closeModal(id){document.getElementById(id)?.classList.remove('open');}
+async function loadAdmins(){
+  const d=await api('/api/admins');if(d.error){toast(d.error,true);return;}cachedAdmins=d.admins||[];cachedStats=d.stats||{};cachedWeek=d.week||'';renderAdmins();loadRoles();
+}
+function renderAdmins(){
+  const q=(document.getElementById('adminSearch')?.value||'').toLowerCase();
+  const arr=cachedAdmins.filter(a=>`${a.nickname||''} ${a.position||''}`.toLowerCase().includes(q));
+  const wrap=document.getElementById('adminsList');
+  if(!arr.length){wrap.innerHTML='<div class="empty">Администраторы не найдены.</div>';return;}
+  let html='<table class="adminTable"><thead><tr><th>Администратор</th><th>Уровень</th><th>Сообщения</th><th></th></tr></thead><tbody>';
+  for(const a of arr){const count=Number(cachedStats[String(a.discord_id)]||0);const canDelete=Number(ADMIN.level||0)>Number(a.admin_level||0)&&Number(a.id)!==Number(ADMIN.id);html+=`<tr><td><div class="adminUser"><img class="adminAvatar" src="${esc(a.vk_avatar||'')}" onerror="this.style.visibility='hidden'"><div class="adminName"><b>${esc(a.nickname||'VK '+a.vk_id)}</b><span>${esc(a.position||'Без должности')}</span></div></div></td><td><span class="level ${Number(a.admin_level)===8?'level8':''}">◈ ${Number(a.admin_level||0)}</span></td><td class="count">${count}</td><td>${canDelete?`<button class="btn danger" onclick="deleteAdmin(${a.id})">Удалить</button>`:''}</td></tr>`;}
+  html+='</tbody></table>';wrap.innerHTML=html;
+}
+async function deleteAdmin(id){if(!confirm('Удалить этот профиль администратора? Вход через VK после этого будет запрещён.'))return;const d=await api('/api/admins/'+id,'DELETE');if(d.error){toast(d.error,true);return;}toast('Профиль удалён');loadAdmins();}
+async function createAdmin(e){e.preventDefault();const f=new FormData(e.target);const body=Object.fromEntries(f.entries());body.admin_level=Number(body.admin_level);const d=await api('/api/admins','POST',body);if(d.error){toast(d.error,true);return;}toast('Профиль администратора создан');e.target.reset();closeModal('createModal');loadAdmins();}
+async function loadRoles(){
+  if(Number(ADMIN.level||0)<8)return;
+  const d=await api('/api/roles');if(!Array.isArray(d))return;
+  let box=document.getElementById('rolesBox');if(!box){box=document.createElement('div');box.id='rolesBox';box.className='section';document.getElementById('page-admins').appendChild(box);}
+  box.innerHTML=`<div class="sectionHead"><div><h2>Роли панели</h2><span class="muted">Максимальный уровень — 8. Роль удаляется только если на ней нет администраторов.</span></div></div><div class="roleCreate" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:15px"><input id="roleName" class="search" style="max-width:300px" placeholder="Название роли"><input id="roleLevel" class="search" style="max-width:140px" type="number" min="1" max="8" placeholder="Уровень"><button class="btn primary" onclick="createRole()">Создать роль</button></div><div style="display:grid;gap:8px">${d.map(r=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:#ffffff04"><span><b>${esc(r.name)}</b> <span class="muted">· уровень ${r.level}</span></span>${r.level===8&&d.filter(x=>x.level===8).length<=1?'':`<button class="btn danger" onclick="deleteRole(${r.id})">Удалить</button>`}</div>`).join('')}</div>`;
+}
+async function createRole(){const name=document.getElementById('roleName')?.value.trim();const level=Number(document.getElementById('roleLevel')?.value);if(!name||level<1||level>8)return toast('Введите название и уровень 1–8',true);if(level>Number(ADMIN.level||0))return toast('Нельзя создать роль выше своего уровня',true);const d=await api('/api/roles','POST',{name,level,permissions:['view_status','view_stats']});if(d.error)return toast(d.error,true);toast('Роль создана');loadRoles();}
+async function deleteRole(id){if(!confirm('Удалить роль панели?'))return;const d=await api('/api/roles/'+id,'DELETE');if(d.error)return toast(d.error,true);toast('Роль удалена');loadRoles();}
 
-async function loadAntiSliv() {
-  const d = await api('/api/antisliv/settings');
-  document.getElementById('maxAttempts').value = d.maxAttempts;
-  document.getElementById('protectedRoles').value = (d.protectedRoles||[]).join(', ');
-  document.getElementById('allowedRoles').value = (d.allowedRoles||[]).join(', ');
-  document.getElementById('allowedUsers').value = (d.allowedUsers||[]).join(', ');
-  document.getElementById('commandAccessRoles').value = (d.commandAccessRoles||[]).join(', ');
-  document.getElementById('resetRole').value = d.resetAttemptsRoleId || '';
-}
-async function saveAntiSliv() {
-  const body = {
-    maxAttempts: document.getElementById('maxAttempts').value,
-    protectedRoles: document.getElementById('protectedRoles').value.split(',').map(s=>s.trim()).filter(Boolean),
-    allowedRoles: document.getElementById('allowedRoles').value.split(',').map(s=>s.trim()).filter(Boolean),
-    allowedUsers: document.getElementById('allowedUsers').value.split(',').map(s=>s.trim()).filter(Boolean),
-    commandAccessRoles: document.getElementById('commandAccessRoles').value.split(',').map(s=>s.trim()).filter(Boolean),
-    resetAttemptsRoleId: document.getElementById('resetRole').value.trim()
-  };
-  const res = await api('/api/antisliv/settings','POST',body);
-  alert(res.message || 'Сохранено');
-}
-
-async function loadAdmins() {
-  const data = await api('/api/admins');
-  if (!Array.isArray(data)) { showToast(data.error || 'Не удалось загрузить админов', true); return; }
-  const roles = await api('/api/roles');
-  if (!Array.isArray(roles)) { showToast(roles.error || 'Не удалось загрузить роли', true); return; }
-  let html = '<table><tr><th>Логин</th><th>Роль</th><th>Уровень</th><th>Действия</th></tr>';
-  data.forEach(a => {
-    html += `<tr><td>${a.username}</td><td>${a.role_name||'—'}</td><td>${a.level||0}</td><td>
-      <select onchange="changeRole(${a.id},this.value)"><option value="">Сменить роль</option></select>
-      ${myLevel > (a.level||0) ? `<button class="red" onclick="deleteAdmin(${a.id})">Удалить</button>` : ''}
-    </td></tr>`;
-  });
-  html += '</table>';
-  document.getElementById('adminsList').innerHTML = html;
-  document.querySelectorAll('#adminsList select').forEach(sel => {
-    roles.forEach(r => {
-      const o = document.createElement('option');
-      o.value = r.id; o.textContent = r.name + ' (' + r.level + ')';
-      sel.appendChild(o);
-    });
-  });
-  const ns = document.getElementById('newRole');
-  ns.innerHTML = '';
-  roles.forEach(r => {
-    const o = document.createElement('option');
-    o.value = r.id; o.textContent = r.name + ' (' + r.level + ')';
-    ns.appendChild(o);
-  });
-}
-async function createAdmin() {
-  const res = await api('/api/admins','POST',{
-    username: document.getElementById('newUser').value,
-    password: document.getElementById('newPass').value,
-    role_id: document.getElementById('newRole').value
-  });
-  alert(res.message || res.error); loadAdmins();
-}
-async function changeRole(id, roleId) {
-  if (!roleId) return;
-  await api('/api/admins/'+id+'/role','POST',{role_id:roleId});
-  loadAdmins();
-}
-async function deleteAdmin(id) {
-  if (!confirm('Удалить админа?')) return;
-  await api('/api/admins/'+id,'DELETE'); loadAdmins();
-}
-
-async function loadRoles() {
-  const data = await api('/api/roles');
-  if (!Array.isArray(data)) { showToast(data.error || 'Не удалось загрузить уровни', true); return; }
-  let html = '<table><tr><th>Название</th><th>Уровень</th><th>Права</th><th></th></tr>';
-  data.forEach(r => {
-    const p = JSON.parse(r.permissions||'[]');
-    html += '<tr><td>'+esc(r.name)+'</td><td>'+r.level+'</td><td>'+esc(p.join(', '))+'</td><td>'+(r.name !== 'Владелец' ? '<button class="red" onclick="deleteWebRole('+r.id+')">Удалить</button>' : '')+'</td></tr>';
-  });
-  html += '</table>';
-  document.getElementById('rolesList').innerHTML = html;
-}
-async function deleteWebRole(id){if(!confirm('Удалить роль?'))return;const r=await api('/api/roles/'+id,'DELETE');alert(r.message||r.error);loadRoles();}
-async function createRole() {
-  const permissions = [...document.querySelectorAll('#tab-roles input[type=checkbox]:checked')].map(c=>c.value);
-  const res = await api('/api/roles','POST',{
-    name: document.getElementById('roleName').value,
-    level: document.getElementById('roleLevel').value,
-    permissions
-  });
-  alert(res.message || res.error); loadRoles();
-}
-
-let cachedIpBans=[];
-function renderIpBans(data){document.getElementById('ipBanCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Заблокированных IP не найдено</div>';else{html='<table><tr><th>IP</th><th>Причина</th><th>Кто забанил</th><th>Дата</th><th>Действие</th></tr>';data.forEach(function(b){html+='<tr><td><span class="badge">'+esc(b.ip)+'</span></td><td>'+esc(b.reason||'—')+'</td><td>'+esc(b.banned_by||'—')+'</td><td>'+new Date(b.created_at).toLocaleString('ru')+'</td><td><button class="green" onclick="unbanIp('+b.id+')">🔓 Разбанить</button></td></tr>';});html+='</table>';}document.getElementById('ipBansList').innerHTML=html;}
-function filterIpBans(){const q=(document.getElementById('ipBanSearch')?.value||'').toLowerCase();renderIpBans(cachedIpBans.filter(function(b){return [b.ip,b.reason,b.banned_by].some(function(x){return String(x||'').toLowerCase().includes(q);});}));}
-async function loadIpBans(){try{const d=await api('/api/ipbans');if(!Array.isArray(d)){showToast(d.error||'Не удалось загрузить список IP',true);return;}cachedIpBans=d;renderIpBans(cachedIpBans);filterIpBans();}catch(e){showToast('Не удалось загрузить список IP',true);}}
-async function banIp() {
-  const res = await api('/api/ipbans','POST',{
-    ip: document.getElementById('banIp').value.trim(),
-    reason: document.getElementById('banReason').value.trim()
-  });
-  showToast(res.message || res.error || 'Готово', !res.message); loadIpBans();
-}
-async function unbanIp(id) {
-  if (!confirm('Разбанить этот IP? Доступ к панели будет снова разрешён.')) return;
-  const r=await api('/api/ipbans/'+id,'DELETE');
-  showToast(r.message||'IP успешно разбанен');
-  loadIpBans();
-}
-
-async function loadUsers(){ const d=await api('/api/users'); bridgeUsers=d.users||[]; renderUsers(); }
-function renderUsers(){ const q=(document.getElementById('userSearch')?.value||'').toLowerCase(); const data=bridgeUsers.filter(u=>!q||[u.id,u.username,u.displayName,u.globalName].some(x=>String(x||'').toLowerCase().includes(q))); let html='<table><tr><th>Пользователь</th><th>ID</th><th>Статус</th><th>Роли</th><th>Действия</th></tr>'; data.forEach(u=>{ let roles=(u.roles||[]).slice(0,4).map(r=>'<span class="pill">'+esc(r.name)+'</span>').join('')||'—'; let actions='<button class="blue" onclick="openProfile(\''+u.id+'\')">Профиль</button>'; if(myLevel>=50&&!u.bot) actions+='<button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить</button>'; html+='<tr class="userrow"><td onclick="openProfile(\''+u.id+'\')"><img class="avatar" src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"><b>'+esc(u.displayName||u.username)+'</b><div class="sub">@'+esc(u.username)+'</div></td><td>'+u.id+'</td><td>'+(u.bot?'🤖 Бот':'👤 Пользователь')+'</td><td>'+roles+'</td><td>'+actions+'</td></tr>'; }); html+='</table>'; document.getElementById('usersList').innerHTML=html; }
-function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-async function openProfile(id){ const r=await api('/api/users/'+id); if(r.error){alert(r.error);return;} const u=r.user, roles=r.roles||[]; document.querySelectorAll('[id^=tab-]').forEach(el=>el.classList.add('hidden')); document.getElementById('tab-profile').classList.remove('hidden'); let roleOpts=''; roles.forEach(x=>{roleOpts+='<label><input type="checkbox" class="urole" value="'+x.id+'" '+((u.roles||[]).some(rr=>rr.id===x.id)?'checked':'')+'> '+esc(x.name)+'</label>';}); const box=document.getElementById('profileBox'); box.innerHTML='<div class="card hero"><button class="ghost" onclick="showTab(\'users\', event)">← Назад</button><div class="profile" style="margin-top:20px"><img class="profileAvatar" src="'+(u.avatar||'')+'"><div><h2>'+esc(u.displayName||u.username)+'</h2><div class="sub">@'+esc(u.username)+' · '+u.id+'</div><div class="kv"><span>Создан</span><b>'+new Date(u.createdAt).toLocaleString('ru')+'</b></div><div class="kv"><span>Вступил</span><b>'+(u.joinedAt?new Date(u.joinedAt).toLocaleString('ru'):'—')+'</b></div><div class="kv"><span>Бот</span><b>'+(u.bot?'Да':'Нет')+'</b></div></div></div></div><div class="card"><h3>Редактирование профиля</h3><label>Никнейм<br><input id="editNick" value="'+esc(u.nickname||'')+'" maxlength="32"></label><h4>Роли</h4><div style="line-height:2">'+(roleOpts||'Нет ролей')+'</div><button class="green" onclick="saveUser(\''+u.id+'\')">💾 Сохранить изменения</button></div><div class="card dangerZone"><h3>Опасная зона</h3><p class="sub">Удаление пользователя = исключение с Discord-сервера.</p><button class="red" onclick="kickUser(\''+u.id+'\',\''+esc(u.displayName||u.username).replace(/'/g,'&#39;')+'\')">Удалить с сервера</button></div>'; }
-async function saveUser(id){const roles=[...document.querySelectorAll('.urole:checked')].map(x=>x.value); const r=await api('/api/users/'+id,'PATCH',{nickname:document.getElementById('editNick').value,roles}); alert(r.message||r.error||'Готово'); openProfile(id);}
-async function kickUser(id,name){if(!confirm('Удалить '+name+' с сервера?'))return;const r=await api('/api/users/'+id,'DELETE');alert(r.message||r.error);loadUsers();}
-async function loadDiscordRoles(){const d=await api('/api/discord-roles');bridgeDiscordRoles=d.roles||[];let h='<table><tr><th>Роль</th><th>ID</th><th>Участников</th><th>Цвет</th><th></th></tr>';bridgeDiscordRoles.forEach(r=>{let act=(!r.managed&&r.id!=='@everyone')?'<button class="red" onclick="deleteDiscordRole(\''+r.id+'\')">Удалить</button>':'';h+='<tr><td><b>'+esc(r.name)+'</b></td><td>'+r.id+'</td><td>'+(r.members||0)+'</td><td>'+esc(r.color||'—')+'</td><td>'+act+'</td></tr>';});h+='</table>';document.getElementById('drolesList').innerHTML=h;}
-async function createDiscordRole(){const r=await api('/api/discord-roles','POST',{name:document.getElementById('droleName').value,color:document.getElementById('droleColor').value,hoist:document.getElementById('droleHoist').checked});alert(r.message||r.error);loadDiscordRoles();}
-async function deleteDiscordRole(id){if(!confirm('Удалить роль Discord?'))return;const r=await api('/api/discord-roles/'+id,'DELETE');alert(r.message||r.error);loadDiscordRoles();}
-
-let cachedLoginLogs=[]; let cachedActionLogs=[];
-function escHtml(v){return String(v??'').replace(/[&<>'"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c];});}
-function showToast(message,bad){const old=document.querySelector('.toast');if(old)old.remove();const t=document.createElement('div');t.className='toast'+(bad?' bad':'');t.textContent=message;document.body.appendChild(t);setTimeout(function(){t.remove();},3200);}
-function filterLogs(){const q=(document.getElementById('logSearch')?.value||'').toLowerCase();const type=document.getElementById('logType')?.value||'all';const cards=document.querySelectorAll('#tab-logs .card');if(cards[1])cards[1].style.display=type==='action'?'none':'block';if(cards[2])cards[2].style.display=type==='login'?'none':'block';renderLoginLogs(cachedLoginLogs.filter(function(x){return JSON.stringify(x).toLowerCase().includes(q);}));renderActionLogs(cachedActionLogs.filter(function(x){return JSON.stringify(x).toLowerCase().includes(q);}));}
-function renderLoginLogs(data){document.getElementById('loginCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(l,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(l.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(l.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot '+(l.success?'':'bad')+'"></span>'+escHtml(l.username||'—')+' <span class="badge">'+(l.success?'Успешный вход':'Ошибка входа')+'</span></div><div class="log-details" title="'+escHtml(l.user_agent||'')+'">'+escHtml(l.user_agent||'Устройство не определено')+'</div></div><div class="'+(l.success?'success':'fail')+'">'+(l.success?'OK':'FAIL')+'</div></div>';});document.getElementById('logsList').innerHTML=html;}
-function renderActionLogs(data){document.getElementById('actionCount').textContent=data.length;let html='';if(!data.length)html='<div class="empty">Нет записей по заданному фильтру</div>';else data.forEach(function(a,i){html+='<div class="log-row" style="animation-delay:'+(Math.min(i,12)*.025)+'s"><div><div class="log-time">'+new Date(a.created_at).toLocaleString('ru')+'</div><div class="log-ip">'+escHtml(a.ip||'—')+'</div></div><div class="log-main"><div class="log-title"><span class="status-dot"></span>'+escHtml(a.action||'СОБЫТИЕ')+' <span class="badge">'+escHtml(a.username||'system')+'</span></div><div class="log-details" title="'+escHtml(a.details||'')+'">'+escHtml(a.details||'Без деталей')+'</div></div><div class="sub">ACTION</div></div>';});document.getElementById('actionsList').innerHTML=html;}
-async function loadLogs(){try{cachedLoginLogs=await api('/api/logs');renderLoginLogs(cachedLoginLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи входов',true);}}
-async function loadActions(){try{cachedActionLogs=await api('/api/actions');renderActionLogs(cachedActionLogs);filterLogs();}catch(e){showToast('Не удалось загрузить логи действий',true);}}
-window.toggleSidebar=toggleSidebar; window.closeSidebar=closeSidebar; window.showTab=showTab;
-window.getStatus=getStatus; window.toggleAntiSliv=toggleAntiSliv; window.restartBot=restartBot; window.getStats=getStats; window.refreshDashboard=refreshDashboard; window.renderDashboardStats=renderDashboardStats;
-window.saveAntiSliv=saveAntiSliv; window.createAdmin=createAdmin; window.deleteAdmin=deleteAdmin; window.createRole=createRole; window.deleteWebRole=deleteWebRole;
-window.banIp=banIp; window.unbanIp=unbanIp; window.loadIpBans=loadIpBans; window.filterIpBans=filterIpBans;
-window.loadUsers=loadUsers; window.renderUsers=renderUsers; window.openProfile=openProfile; window.saveUser=saveUser; window.kickUser=kickUser; window.changeRole=changeRole; window.loadAdmins=loadAdmins; window.loadRoles=loadRoles; window.loadAntiSliv=loadAntiSliv;
-window.loadDiscordRoles=loadDiscordRoles; window.createDiscordRole=createDiscordRole; window.deleteDiscordRole=deleteDiscordRole;
-window.loadLogs=loadLogs; window.loadActions=loadActions; window.filterLogs=filterLogs; window.showToast=showToast;
-window.addEventListener('error', function(e){ console.error('[PANEL JS]', e.error || e.message); try{showToast('Ошибка интерфейса: '+(e.message||'неизвестная ошибка'), true);}catch(_){} });
-window.addEventListener('unhandledrejection', function(e){ console.error('[PANEL Promise]', e.reason); try{showToast('Ошибка операции. Проверьте соединение и права.', true);}catch(_){} });
-
-// Direct menu binding: works reliably on Android WebView/Chrome even when inline handlers are cached oddly.
-document.addEventListener('DOMContentLoaded', function(){
-  refreshDashboard().catch(()=>{});
-  const btn=document.getElementById('menuOpenBtn');
-  if(btn){
-    const open=()=>{toggleSidebar(); btn.setAttribute('aria-expanded',document.getElementById('sidebar')?.classList.contains('open')?'true':'false');};
-    btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();open();},{passive:false});
-    btn.addEventListener('pointerup',e=>{if(e.pointerType==='touch'){e.preventDefault();e.stopPropagation();open();}},{passive:false});
-  }
-  document.getElementById('sidebarOverlay')?.addEventListener('click',closeSidebar);
-  document.getElementById('sidebar')?.addEventListener('click',e=>e.stopPropagation());
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.navBtn').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.page)));
+  document.getElementById('menuBtn')?.addEventListener('click',openSidebar);document.getElementById('sidebarOverlay')?.addEventListener('click',closeSidebar);
+  document.getElementById('refreshBtn')?.addEventListener('click',()=>{loadStatus(true);loadMine();});
+  document.getElementById('statusBtn')?.addEventListener('click',async()=>{const d=await loadStatus(false);if(d){const m=document.getElementById('modalStats');m.innerHTML=`<div class="modalStat"><small>Discord</small><b>${fmtStatus(d.discord)}</b></div><div class="modalStat"><small>VK</small><b>${fmtStatus(d.vk)}</b></div><div class="modalStat"><small>Telegram</small><b>${fmtStatus(d.telegram)}</b></div><div class="modalStat"><small>Anti-Sliv</small><b>${fmtStatus(d.antiSliv?'online':'offline')}</b></div><div class="modalStat"><small>Ping</small><b>${d.ping==null?'—':esc(d.ping+' ms')}</b></div><div class="modalStat"><small>Uptime</small><b>${esc(fmtUptime(d.uptime))}</b></div>`;document.getElementById('statsModal').classList.add('open');}});
+  document.getElementById('statsBtn')?.addEventListener('click',openStats);document.getElementById('closeStats')?.addEventListener('click',()=>closeModal('statsModal'));document.getElementById('closeCreate')?.addEventListener('click',()=>closeModal('createModal'));document.getElementById('statsModal')?.addEventListener('click',e=>{if(e.target.id==='statsModal')closeModal('statsModal')});document.getElementById('createModal')?.addEventListener('click',e=>{if(e.target.id==='createModal')closeModal('createModal')});
+  document.getElementById('openCreate')?.addEventListener('click',()=>document.getElementById('createModal').classList.add('open'));document.getElementById('createForm')?.addEventListener('submit',createAdmin);document.getElementById('adminSearch')?.addEventListener('input',renderAdmins);
+  loadMine();
 });
-
-// Fallback event delegation: avoids relying on inline onclick handlers on mobile browsers.
-document.addEventListener('click', function (e) {
-  const nav = e.target.closest('.sideItem[data-tab]');
-  if (nav) {
-    e.preventDefault();
-    e.stopPropagation();
-    showTab(nav.dataset.tab);
-    return;
-  }
-  const menu = e.target.closest('.menuBtn');
-  if (menu) {
-    e.preventDefault();
-    toggleSidebar();
-  }
-}, true);
-
-// iOS/Android touch fallback for buttons/links.
-document.addEventListener('touchend', function (e) {
-  const nav = e.target.closest('.sideItem[data-tab]');
-  if (nav) {
-    e.preventDefault();
-    showTab(nav.dataset.tab);
-  }
-}, {passive:false});
-
-showTab('main');
+window.showPage=showPage;window.deleteAdmin=deleteAdmin;window.createAdmin=createAdmin;window.deleteRole=deleteRole;window.createRole=createRole;

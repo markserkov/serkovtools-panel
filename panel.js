@@ -48,18 +48,6 @@ function checkBridgeSecret(req, res) {
     return true;
 }
 
-app.post('/bridge/poll', (req, res) => {
-    if (!checkBridgeSecret(req, res)) return;
-    const body = req.body || {};
-    if (body.state) bridgeState = body.state;
-    if (body.settings) bridgeSettings = body.settings;
-    if (body.stats) bridgeStats = body.stats;
-    if (Array.isArray(body.users)) bridgeUsers = body.users;
-    if (Array.isArray(body.discordRoles)) bridgeDiscordRoles = body.discordRoles;
-    const commands = commandQueue.splice(0, commandQueue.length);
-    res.json({ commands });
-});
-
 
 app.set('trust proxy', 1);
 app.use(cookieParser());
@@ -71,6 +59,25 @@ app.use(session({
     saveUninitialized: false,
     cookie: { maxAge: 1000 * 60 * 60 * 24 * 7 }
 }));
+
+app.post('/bridge/poll', async (req, res) => {
+    if (!checkBridgeSecret(req, res)) return;
+    const body = req.body || {};
+    if (body.state) bridgeState = body.state;
+    if (body.settings) bridgeSettings = body.settings;
+    if (body.stats) bridgeStats = body.stats;
+    if (Array.isArray(body.users)) bridgeUsers = body.users;
+    if (Array.isArray(body.discordRoles)) bridgeDiscordRoles = body.discordRoles;
+    if (Array.isArray(body.adminProfiles)) {
+        for (const a of body.adminProfiles) {
+            if (!a || !a.vk_id) continue;
+            await db.run(`UPDATE web_admins SET nickname=COALESCE(NULLIF(?,'') ,nickname), vk_avatar=COALESCE(NULLIF(?,'') ,vk_avatar) WHERE vk_id=?`, [String(a.nickname||''), String(a.vk_avatar||''), String(a.vk_id)]);
+        }
+    }
+    const adminProfiles = await db.all(`SELECT id,vk_id,discord_id,nickname,position,admin_level,vk_avatar FROM web_admins ORDER BY admin_level DESC, id ASC`);
+    const commands = commandQueue.splice(0, commandQueue.length);
+    res.json({ commands, adminProfiles });
+});
 
 // ---------- Таблицы ----------
 await db.exec(`
@@ -118,535 +125,101 @@ CREATE TABLE IF NOT EXISTS web_actions (
 );
 `);
 
-// Базовые роли
-const rolesCount = await db.get(`SELECT COUNT(*) as c FROM web_roles`);
-if (rolesCount.c === 0) {
-    await db.run(`INSERT INTO web_roles (name, level, permissions) VALUES 
-        ('Владелец', 100, ?),
-        ('Админ', 50, ?),
-        ('Модератор', 10, ?)`,
-        [
-            JSON.stringify(['view_status','toggle_antisliv','restart_bot','view_logs','manage_admins','manage_roles','view_stats','manage_ipbans','view_users','edit_users','delete_users','manage_discord_roles']),
-            JSON.stringify(['view_status','toggle_antisliv','view_logs','view_stats']),
-            JSON.stringify(['view_status','view_logs'])
-        ]
-    );
+// Миграция старой схемы в VK-only модель
+const columns = await db.all(`PRAGMA table_info(web_admins)`);
+const have = new Set(columns.map(x=>x.name));
+for (const [name,type] of [['vk_id','TEXT'],['discord_id','TEXT'],['nickname','TEXT'],['position','TEXT'],['appointment_reason','TEXT'],['vk_avatar','TEXT'],['admin_level','INTEGER']]) {
+  if(!have.has(name)) await db.exec(`ALTER TABLE web_admins ADD COLUMN ${name} ${type}`);
 }
-
-// Главный админ
-const mainAdmin = await db.get(`SELECT * FROM web_admins WHERE username = ?`, [ADMIN_USERNAME]);
-if (!mainAdmin) {
-    const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-    const ownerRole = await db.get(`SELECT id FROM web_roles WHERE name = 'Владелец'`);
-    await db.run(`INSERT INTO web_admins (username, password_hash, role_id) VALUES (?, ?, ?)`, 
-        [ADMIN_USERNAME, hash, ownerRole.id]);
-    console.log('[WEB] Главный админ создан');
+await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_web_admins_vk_id ON web_admins(vk_id) WHERE vk_id IS NOT NULL AND vk_id <> ''`);
+await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_web_admins_discord_id ON web_admins(discord_id) WHERE discord_id IS NOT NULL AND discord_id <> ''`);
+await db.run(`UPDATE web_roles SET level=8 WHERE name='Владелец'`);
+await db.run(`UPDATE web_roles SET level=CASE WHEN level>8 THEN 8 WHEN level<1 THEN 1 ELSE level END`);
+await db.run(`UPDATE web_admins SET admin_level=CASE WHEN admin_level>8 THEN 8 WHEN admin_level<1 THEN 1 ELSE admin_level END WHERE admin_level IS NOT NULL`);
+const roleRows = await db.all(`SELECT * FROM web_roles ORDER BY level DESC`);
+if(!roleRows.length){
+  await db.run(`INSERT INTO web_roles(name,level,permissions) VALUES (?,?,?),(?,?,?),(?,?,?)`,[
+    'Владелец',8,JSON.stringify(['view_status','view_stats','manage_admins','manage_roles']),
+    'Администратор',6,JSON.stringify(['view_status','view_stats','manage_admins']),
+    'Модератор',3,JSON.stringify(['view_status','view_stats'])
+  ]);
 }
+await db.run(`CREATE TABLE IF NOT EXISTS admin_message_stats (week_key TEXT NOT NULL, discord_id TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(week_key,discord_id))`);
 
-await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Владелец'`, [JSON.stringify(['view_status','toggle_antisliv','restart_bot','view_logs','manage_admins','manage_roles','view_stats','manage_ipbans','view_users','edit_users','delete_users','manage_discord_roles'])]);
-await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Админ'`, [JSON.stringify(['view_status','toggle_antisliv','view_logs','view_stats','view_users','edit_users'])]);
-await db.run(`UPDATE web_roles SET permissions = ? WHERE name = 'Модератор'`, [JSON.stringify(['view_status','view_logs','view_users'])]);
-
-// ---------- Анти-DDoS + Бан IP ----------
-const rateLimitMap = new Map();
-
-function checkRateLimit(key, limit = 40, windowMs = 60000) {
-    const now = Date.now();
-    const data = rateLimitMap.get(key) || { count: 0, last: now };
-    if (now - data.last > windowMs) {
-        data.count = 1;
-        data.last = now;
-    } else {
-        data.count++;
-    }
-    rateLimitMap.set(key, data);
-    return data.count <= limit;
-}
-
-setInterval(() => {
-    const now = Date.now();
-    for (const [key, data] of rateLimitMap) {
-        if (now - data.last > 300000) rateLimitMap.delete(key);
-    }
-}, 300000);
-
-async function isIpBanned(ip) {
-    const ban = await db.get(`SELECT id FROM web_ip_bans WHERE ip = ?`, [ip]);
-    return !!ban;
-}
-
-app.use(async (req, res, next) => {
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-
-    if (await isIpBanned(ip)) {
-        return res.status(403).send(`<h1 style="color:#ef4444;text-align:center;margin-top:120px">Ваш IP заблокирован</h1>`);
-    }
-
-    if (!checkRateLimit(ip, 45, 60000)) {
-        return res.status(429).send(`<h1 style="color:#f59e0b;text-align:center;margin-top:120px">Слишком много запросов</h1>`);
-    }
-
-    if (req.path === '/login' && req.method === 'POST') {
-        if (!checkRateLimit(ip + '_login', 7, 300000)) {
-            return res.status(429).send(`<h1 style="color:#ef4444;text-align:center;margin-top:120px">Слишком много попыток входа</h1>`);
-        }
-    }
-
-    next();
+app.get('/auth/vk', (req,res)=>{
+  const clientId = process.env.VK_CLIENT_ID || '';
+  const redirectUri = process.env.VK_REDIRECT_URI || `https://${req.get('host')}/auth/vk/callback`;
+  if(!clientId) return res.status(503).send('<h2 style="font-family:system-ui;text-align:center;margin-top:15vh">VK ID авторизация ещё не настроена.</h2><p style="text-align:center">Добавьте VK_CLIENT_ID, VK_CLIENT_SECRET и VK_REDIRECT_URI в Render.</p>');
+  const state = require('crypto').randomBytes(24).toString('hex');
+  req.session.vkState = state;
+  const url = 'https://oauth.vk.com/authorize?' + new URLSearchParams({client_id:clientId,display:'page',redirect_uri:redirectUri,scope:'email',response_type:'code',v:'5.199',state}).toString();
+  res.redirect(url);
 });
 
-// ---------- Helpers ----------
-async function getAdminWithRole(username) {
-    return await db.get(`
-        SELECT a.*, r.name as role_name, r.level, r.permissions
-        FROM web_admins a
-        LEFT JOIN web_roles r ON a.role_id = r.id
-        WHERE a.username = ?
-    `, [username]);
-}
-
-function hasPermission(admin, perm) {
-    if (!admin) return false;
-    if (admin.level >= 100) return true;
-    try {
-        return JSON.parse(admin.permissions || '[]').includes(perm);
-    } catch { return false; }
-}
-
-function requireAdmin(req, res, next) {
-    if (req.session?.isAdmin) return next();
-    return res.redirect('/login');
-}
-
-function requirePermission(perm) {
-    return async (req, res, next) => {
-        if (!req.session?.isAdmin) return res.status(401).json({ error: 'Не авторизован' });
-        const admin = await getAdminWithRole(req.session.username);
-        if (!admin || !hasPermission(admin, perm)) {
-            return res.status(403).json({ error: 'Недостаточно прав' });
-        }
-        req.admin = admin;
-        next();
-    };
-}
-
-async function logAction(username, action, details, ip) {
-    try {
-        await db.run(`INSERT INTO web_actions (username, action, details, ip) VALUES (?, ?, ?, ?)`,
-            [username, action, details || '', ip || '']);
-    } catch (e) {}
-}
-
-async function logLogin(username, ip, userAgent, success) {
-    try {
-        await db.run(`INSERT INTO web_logins (username, ip, user_agent, success) VALUES (?, ?, ?, ?)`,
-            [username, ip, userAgent, success ? 1 : 0]);
-    } catch (e) {}
-}
-
-// ---------- LOGIN ----------
-app.get('/login', (req, res) => {
-    if (req.session?.isAdmin) return res.redirect('/');
-    res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход — SerkovTools</title><style>
-:root{--a:#8b5cf6;--b:#c026d3;--bg:#07050c;--text:#f8f5ff;--muted:#a59abf}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;overflow:hidden;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 20% 15%,rgba(124,58,237,.32),transparent 32%),radial-gradient(circle at 85% 80%,rgba(192,38,211,.18),transparent 30%),var(--bg)}body:before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(167,139,250,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(167,139,250,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(#000,transparent 90%);pointer-events:none}.orb{position:fixed;width:320px;height:320px;border-radius:50%;filter:blur(70px);opacity:.22;background:#7c3aed;animation:drift 9s ease-in-out infinite}.orb.one{left:-100px;top:-80px}.orb.two{right:-120px;bottom:-120px;background:#c026d3;animation-delay:-3s}.loginWrap{width:min(440px,calc(100% - 28px));position:relative;z-index:2}.loginCard{padding:34px;border:1px solid rgba(196,181,253,.17);border-radius:28px;background:linear-gradient(145deg,rgba(27,18,48,.86),rgba(10,7,18,.88));box-shadow:0 30px 100px rgba(0,0,0,.48),0 0 70px rgba(124,58,237,.13);backdrop-filter:blur(24px);animation:enter .6s cubic-bezier(.2,.8,.2,1)}.brand{display:flex;align-items:center;gap:13px;margin-bottom:28px}.logo{width:56px;height:56px;display:grid;place-items:center;border-radius:18px;background:linear-gradient(135deg,#6366f1,#a855f7 55%,#d946ef);font-size:25px;box-shadow:0 0 40px rgba(139,92,246,.35);animation:float 4s ease-in-out infinite}.brand h1{font-size:24px;margin:0;letter-spacing:-.03em}.brand p{margin:4px 0 0;color:var(--muted);font-size:12px}.eyebrow{display:inline-flex;padding:6px 9px;border-radius:999px;background:rgba(139,92,246,.12);border:1px solid rgba(196,181,253,.13);color:#d8b4fe;font-size:10px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px}h2{margin:0 0 7px;font-size:25px}.desc{margin:0 0 24px;color:var(--muted);font-size:13px;line-height:1.5}.field{margin:13px 0}.field label{display:block;font-size:11px;color:#c8bedb;margin:0 0 7px}input{width:100%;padding:14px 15px;border-radius:14px;border:1px solid rgba(167,139,250,.17);background:rgba(5,3,11,.7);color:#fff;outline:none;font-size:14px;transition:.2s}input:focus{border-color:#8b5cf6;box-shadow:0 0 0 4px rgba(139,92,246,.1),0 0 25px rgba(139,92,246,.08);transform:translateY(-1px)}button{position:relative;overflow:hidden;width:100%;padding:14px;border:0;border-radius:14px;color:#fff;font-size:14px;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#6366f1,#8b5cf6 55%,#c026d3);box-shadow:0 12px 30px rgba(124,58,237,.25);transition:transform .2s,filter .2s}button:hover{transform:translateY(-2px);filter:brightness(1.08)}.foot{margin-top:18px;text-align:center;color:#756b8e;font-size:10px}@keyframes enter{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(35px,-25px)}}@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-</style></head><body><div class="orb one"></div><div class="orb two"></div><main class="loginWrap"><section class="loginCard"><div class="brand"><div class="logo">⚡</div><div><h1>SerkovTools</h1><p>Центр управления сервером</p></div></div><span class="eyebrow">Secure access</span><h2>Добро пожаловать</h2><p class="desc">Войдите в административную панель, чтобы управлять сервером и его пользователями.</p><form method="POST" action="/login"><div class="field"><label>ЛОГИН</label><input name="username" placeholder="Введите логин" required autocomplete="username"></div><div class="field"><label>ПАРОЛЬ</label><input name="password" type="password" placeholder="Введите пароль" required autocomplete="current-password"></div><button type="submit">Войти в панель <span>→</span></button></form><div class="foot">SerkovTools • защищённая панель администратора</div></section></main></body></html>`);
-});
-
-app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    const ua = req.headers['user-agent'] || '';
-
-    const admin = await getAdminWithRole(username);
-    if (admin && await bcrypt.compare(password, admin.password_hash)) {
-        req.session.isAdmin = true;
-        req.session.username = username;
-        await logLogin(username, ip, ua, true);
-        await logAction(username, 'LOGIN_SUCCESS', 'Успешный вход', ip);
-        return res.redirect('/');
+app.get('/auth/vk/callback', async (req,res)=>{
+  try{
+    if(!req.query.code || !req.query.state || req.query.state !== req.session.vkState) return res.status(400).send('<h2 style="font-family:system-ui;text-align:center;margin-top:15vh">Некорректная VK-сессия. Попробуйте снова.</h2>');
+    delete req.session.vkState;
+    const clientId=process.env.VK_CLIENT_ID||''; const clientSecret=process.env.VK_CLIENT_SECRET||'';
+    const redirectUri=process.env.VK_REDIRECT_URI || `https://${req.get('host')}/auth/vk/callback`;
+    if(!clientId||!clientSecret) return res.status(503).send('VK OAuth не настроен.');
+    const tokenUrl='https://oauth.vk.com/access_token?'+new URLSearchParams({client_id:clientId,client_secret:clientSecret,redirect_uri:redirectUri,code:String(req.query.code)}).toString();
+    const tokenResp=await fetch(tokenUrl); const tokenData=await tokenResp.json();
+    if(!tokenResp.ok || !tokenData.user_id) throw new Error(tokenData.error_description||tokenData.error||'VK token error');
+    const userUrl='https://api.vk.com/method/users.get?'+new URLSearchParams({user_ids:String(tokenData.user_id),fields:'photo_200',access_token:tokenData.access_token,v:'5.199'}).toString();
+    const userResp=await fetch(userUrl); const userData=await userResp.json();
+    const vk=userData.response?.[0]; if(!vk) throw new Error('Не удалось получить профиль VK');
+    const vkId=String(vk.id);
+    let admin=await db.get(`SELECT a.*, r.name AS role_name, r.level, r.permissions FROM web_admins a LEFT JOIN web_roles r ON a.role_id=r.id WHERE a.vk_id=?`,[vkId]);
+    if(!admin){
+      const bootstrap=String(process.env.VK_BOOTSTRAP_ID||'');
+      if(bootstrap && bootstrap===vkId){
+        const ownerRole=await db.get(`SELECT id FROM web_roles WHERE level=8 ORDER BY id LIMIT 1`);
+        const roleId=ownerRole?.id || (await db.get(`SELECT id FROM web_roles WHERE name='Владелец'`))?.id;
+        await db.run(`INSERT INTO web_admins (username,password_hash,role_id,vk_id,discord_id,nickname,position,appointment_reason,vk_avatar,admin_level) VALUES (?,?,?,?,?,?,?,?,?,?)`,[`vk_${vkId}`,'',roleId,vkId,process.env.VK_BOOTSTRAP_DISCORD_ID||'',`${vk.first_name||''} ${vk.last_name||''}`.trim(),'Владелец','Первичная настройка панели',vk.photo_200||'',8]);
+        admin=await db.get(`SELECT a.*, r.name AS role_name, r.level, r.permissions FROM web_admins a LEFT JOIN web_roles r ON a.role_id=r.id WHERE a.vk_id=?`,[vkId]);
+      }
     }
-
-    await logLogin(username || 'unknown', ip, ua, false);
-    await logAction(username || 'unknown', 'LOGIN_FAIL', 'Неудачная попытка входа', ip);
-    res.send(`<h2 style="color:#ef4444;text-align:center;margin-top:100px">Неверный логин или пароль</h2>
-              <p style="text-align:center"><a href="/login" style="color:#3b82f6">Попробовать снова</a></p>`);
+    if(!admin){
+      return res.status(403).send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#080611;color:#fff;font-family:system-ui"><div style="max-width:460px;padding:28px;text-align:center;border:1px solid #3b2b5e;border-radius:24px;background:#120c20"><h2>Доступ не предоставлен</h2><p style="color:#aaa">Ваш VK ID <b>${vkId}</b> ещё не добавлен в администрацию. Попросите администратора создать профиль.</p><a href="/auth/vk" style="color:#a78bfa">Войти другим VK</a></div></body></html>`);
+    }
+    await db.run(`UPDATE web_admins SET nickname=?, vk_avatar=? WHERE id=?`,[`${vk.first_name||''} ${vk.last_name||''}`.trim(),vk.photo_200||admin.vk_avatar||'',admin.id]);
+    req.session.adminId=admin.id; req.session.vkId=vkId; req.session.isAdmin=true;
+    res.redirect('/');
+  }catch(e){ console.error('[VK AUTH]',e); res.status(500).send('<h2 style="font-family:system-ui;text-align:center;margin-top:15vh">Ошибка авторизации VK. Попробуйте ещё раз.</h2><p style="text-align:center"><a href="/auth/vk">Повторить</a></p>'); }
 });
 
-app.get('/logout', async (req, res) => {
-    const username = req.session?.username || 'unknown';
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    await logAction(username, 'LOGOUT', 'Выход из панели', ip);
-    req.session.destroy();
-    res.redirect('/login');
-});
+app.get('/login',(req,res)=>res.send(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SerkovTools — VK</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#40208055,transparent 35%),#080611;color:#fff;font-family:Inter,system-ui}.card{width:min(420px,calc(100% - 32px));padding:34px;border:1px solid #ffffff18;border-radius:28px;background:linear-gradient(145deg,#1d1230e8,#0b0813ee);box-shadow:0 30px 90px #0008;text-align:center}.logo{font-size:42px;margin-bottom:12px}.muted{color:#a99fba;line-height:1.6}.vk{display:block;margin-top:24px;padding:15px;border-radius:16px;text-decoration:none;color:#fff;font-weight:800;background:linear-gradient(135deg,#0077ff,#4aa3ff);box-shadow:0 14px 34px #0878ff33}.foot{margin-top:16px;color:#756b8e;font-size:12px}</style></head><body><main class="card"><div class="logo">⚡</div><h1>SerkovTools</h1><p class="muted">Закрытая панель администрации.<br>Вход выполняется только через VK.</p><a class="vk" href="/auth/vk">Войти через VK</a><div class="foot">Доступ получают только созданные администраторы.</div></main></body></html>`));
 
-// ---------- ГЛАВНАЯ ПАНЕЛЬ ----------
-app.get('/panel-client.js', (req, res) => res.sendFile(path.join(__dirname, 'panel-client.js')));
+app.get('/logout', async (req,res)=>{ await logAction(req.session?.vkId||'unknown','LOGOUT','Выход из панели',getClientIp(req)); req.session.destroy(()=>res.redirect('/login')); });
 
-app.get('/', requireAdmin, async (req, res) => {
-    const admin = await getAdminWithRole(req.session.username);
-    const perms = admin ? JSON.parse(admin.permissions || '[]') : [];
+// ---------- Auth helpers ----------
+async function getAdminById(id){ return db.get(`SELECT a.*, r.name AS role_name, r.level AS role_level, r.permissions FROM web_admins a LEFT JOIN web_roles r ON a.role_id=r.id WHERE a.id=?`,[id]); }
+function hasPermission(admin,perm){ if(!admin)return false; if(Number(admin.admin_level||admin.role_level||0)>=8)return true; try{return JSON.parse(admin.permissions||'[]').includes(perm);}catch{return false;} }
+function requireAdmin(req,res,next){ if(req.session?.isAdmin && req.session.adminId)return next(); return res.redirect('/login'); }
+function requirePermission(perm){return async(req,res,next)=>{if(!req.session?.isAdmin)return res.status(401).json({error:'Не авторизован'});const admin=await getAdminById(req.session.adminId);if(!admin||!hasPermission(admin,perm))return res.status(403).json({error:'Недостаточно прав'});req.admin=admin;next();};}
+async function logAction(username,action,details,ip){try{await db.run(`INSERT INTO web_actions (username,action,details,ip) VALUES (?,?,?,?)`,[String(username||''),action,details||'',ip||'']);}catch{}}
 
-    res.send(`<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SerkovTools — Панель управления</title>
-<style>
-:root{--bg:#09070f;--panel:rgba(19,14,34,.72);--panel2:rgba(28,20,48,.72);--line:rgba(196,181,253,.14);--text:#f7f3ff;--muted:#9f96b8;--accent:#8b5cf6;--accent2:#c084fc;--good:#34d399;--bad:#fb7185;--warn:#fbbf24}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 15% -10%,rgba(124,58,237,.35),transparent 32%),radial-gradient(circle at 105% 15%,rgba(192,132,252,.18),transparent 28%),#09070f;color:var(--text);margin:0;min-height:100vh;overflow-x:hidden}
-body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(167,139,250,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(167,139,250,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,#000,transparent 85%);z-index:-1}
-.container{max-width:1320px;margin:0 auto;padding:30px 22px 70px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:15px;animation:fadeUp .55s ease both}.brand{display:flex;align-items:center;gap:14px}.logo{width:52px;height:52px;border-radius:18px;background:linear-gradient(135deg,#6366f1,#a855f7 55%,#d946ef);display:grid;place-items:center;font-size:25px;box-shadow:0 0 40px rgba(139,92,246,.32);animation:float 5s ease-in-out infinite}h1{margin:0;font-size:1.6rem;letter-spacing:-.02em}h2,h3{margin-top:0}.sub{color:var(--muted);font-size:13px;margin-top:4px}.card{position:relative;background:linear-gradient(145deg,rgba(31,22,55,.78),rgba(13,10,24,.72));padding:21px;border-radius:22px;margin-bottom:18px;border:1px solid var(--line);box-shadow:0 18px 60px rgba(0,0,0,.24);backdrop-filter:blur(18px);animation:fadeUp .42s ease both;transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease}.card:hover{border-color:rgba(196,181,253,.24);box-shadow:0 22px 70px rgba(0,0,0,.3)}.hero{padding:30px;background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(168,85,247,.13) 55%,rgba(217,70,239,.08));border-color:rgba(196,181,253,.2)}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.stat{padding:18px;border-radius:18px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);transition:transform .25s ease,background .25s ease}.stat:hover{transform:translateY(-4px);background:rgba(139,92,246,.08)}.stat b{display:block;font-size:27px;color:#d8b4fe}.stat span{font-size:12px;color:var(--muted)}
-.tabs{display:flex;gap:8px;margin:18px 0 20px;flex-wrap:wrap;position:sticky;top:10px;z-index:20}.tab{padding:11px 16px;background:rgba(18,13,31,.78);border-radius:14px;cursor:pointer;border:1px solid rgba(196,181,253,.12);transition:all .25s cubic-bezier(.2,.8,.2,1);backdrop-filter:blur(16px);user-select:none}.tab:hover{transform:translateY(-2px);border-color:rgba(167,139,250,.45);background:rgba(38,25,64,.86)}.tab.active{background:linear-gradient(135deg,#6366f1,#a855f7);border-color:transparent;box-shadow:0 9px 30px rgba(124,58,237,.28);transform:translateY(-1px)}
-button{padding:10px 15px;margin:4px;border:0;border-radius:12px;cursor:pointer;font-size:13px;font-weight:700;color:#fff;transition:transform .2s ease,filter .2s ease,box-shadow .2s ease;position:relative;overflow:hidden}button:after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.14),transparent 75%);transform:translateX(-120%);transition:transform .55s ease}button:hover:after{transform:translateX(120%)}button:hover{transform:translateY(-2px);filter:brightness(1.08);box-shadow:0 8px 22px rgba(0,0,0,.2)}button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}button:active{transform:translateY(0) scale(.98)}.green{background:linear-gradient(135deg,#059669,#10b981)}.red{background:linear-gradient(135deg,#be123c,#ef4444)}.blue{background:linear-gradient(135deg,#4f46e5,#7c3aed)}.gray{background:#29243b}.purple{background:linear-gradient(135deg,#7e22ce,#a855f7)}.cyan{background:linear-gradient(135deg,#0e7490,#06b6d4)}.ghost{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.12)}
-pre{background:#080611;padding:16px;border-radius:15px;overflow:auto;font-size:13px;line-height:1.5;border:1px solid rgba(255,255,255,.07)}table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;overflow:hidden}th,td{padding:13px 11px;text-align:left;border-bottom:1px solid rgba(255,255,255,.065);vertical-align:middle}th{color:#a9a0bf;font-weight:650;text-transform:uppercase;font-size:10px;letter-spacing:.08em}tbody tr,.log-row{transition:background .2s ease,transform .2s ease}.userrow:hover,tbody tr:hover,.log-row:hover{background:rgba(139,92,246,.065)}
-input,select,textarea{padding:11px 12px;border-radius:12px;border:1px solid rgba(167,139,250,.18);background:rgba(10,7,19,.78);color:#fff;margin:4px 0;outline:none;width:auto;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease}input:focus,select:focus,textarea:focus{border-color:#8b5cf6;box-shadow:0 0 0 4px rgba(139,92,246,.11);transform:translateY(-1px)}textarea{width:100%;min-height:90px}.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:11px;background:rgba(139,92,246,.17);color:#d8b4fe;border:1px solid rgba(196,181,253,.14)}.online{color:var(--good)}.offline{color:var(--bad)}.success{color:var(--good);font-weight:700}.fail{color:var(--bad);font-weight:700}.hidden{display:none!important}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.search{width:min(390px,100%)}.profile{display:grid;grid-template-columns:120px 1fr;gap:22px}.profileAvatar{width:110px;height:110px;border-radius:30px;object-fit:cover;background:#2b2348;box-shadow:0 12px 40px rgba(0,0,0,.25)}.kv{display:grid;grid-template-columns:150px 1fr;gap:8px;margin:8px 0}.kv span:first-child{color:var(--muted)}.pill{display:inline-block;margin:3px;padding:5px 9px;border-radius:9px;background:rgba(99,102,241,.14);font-size:11px}.dangerZone{border-color:rgba(239,68,68,.28);background:linear-gradient(145deg,rgba(127,29,29,.14),rgba(20,10,18,.6))}
-.log-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.log-toolbar input{flex:1;min-width:190px}.log-list{display:grid;gap:9px}.log-row{display:grid;grid-template-columns:155px 1fr auto;gap:14px;align-items:center;padding:14px 15px;border:1px solid rgba(255,255,255,.065);border-radius:15px;background:rgba(255,255,255,.025);animation:logIn .32s ease both}.log-main{min-width:0}.log-title{font-weight:750;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.log-details{color:var(--muted);font-size:12px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.log-time{font-size:11px;color:#9f96b8}.log-ip{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#c4b5fd}.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--good);box-shadow:0 0 12px rgba(52,211,153,.7)}.status-dot.bad{background:var(--bad);box-shadow:0 0 12px rgba(251,113,133,.6)}.empty{padding:35px;text-align:center;color:var(--muted);border:1px dashed rgba(196,181,253,.14);border-radius:16px}.toast{position:fixed;right:22px;bottom:22px;z-index:1000;min-width:240px;max-width:380px;padding:14px 16px;border:1px solid rgba(196,181,253,.18);border-radius:15px;background:rgba(20,14,34,.94);box-shadow:0 18px 55px rgba(0,0,0,.38);backdrop-filter:blur(18px);animation:toastIn .3s ease}.toast.bad{border-color:rgba(251,113,133,.3)}
-@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@keyframes logIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}@keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
-@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.log-row{grid-template-columns:1fr}.log-ip{text-align:left}}@media(max-width:800px){.profile{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}table{display:block;overflow-x:auto;white-space:nowrap}.tabs{position:static}}@media(max-width:520px){.container{padding:18px 12px}.grid{grid-template-columns:1fr 1fr}.header{align-items:flex-start}.brand{align-items:flex-start}.logo{width:44px;height:44px}.toast{left:12px;right:12px;bottom:12px}}
-
-/* ===== SerkovTools V5 responsive UI ===== */
-html,body{width:100%;overflow-x:hidden}.menu-open{overflow:hidden!important}
-body{font-size:15px;line-height:1.45}
-.container{max-width:1280px;margin:0 auto;padding:24px 20px 72px}
-.header{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0 22px}
-.header .brand{min-width:0;display:flex;align-items:center;gap:12px}
-.header .brand>div:last-child{min-width:0}
-.header h1{font-size:clamp(1.35rem,4vw,2rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.header .sub{font-size:12px}
-.headerActions{display:flex;align-items:center;gap:10px;flex-shrink:0}
-.livePill{display:inline-flex;align-items:center;gap:7px;padding:9px 12px;border-radius:999px;background:rgba(52,211,153,.09);border:1px solid rgba(52,211,153,.18);font-size:12px;color:#c8f7df;white-space:nowrap}
-.livePill i{width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 12px rgba(52,211,153,.8);animation:pulse 1.8s infinite}
-.menuBtn{width:48px!important;height:48px!important;padding:0!important;margin:0!important;display:grid!important;place-items:center!important;font-size:22px!important;flex:0 0 48px!important;border-radius:15px!important}
-.headerActions .gray{width:auto!important;margin:0!important;padding:11px 18px!important}
-/* Off-canvas navigation */
-.sidebarOverlay{position:fixed;inset:0;background:rgba(3,2,8,.62);backdrop-filter:blur(5px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s ease,visibility .25s ease;z-index:998}
-.sidebarOverlay.open{opacity:1;visibility:visible;pointer-events:auto}
-.sidebar{position:fixed;z-index:999;left:0;top:0;bottom:0;width:min(310px,86vw);padding:18px;display:flex;flex-direction:column;background:linear-gradient(160deg,rgba(25,17,47,.98),rgba(8,6,16,.99));border-right:1px solid rgba(196,181,253,.16);box-shadow:25px 0 80px rgba(0,0,0,.45);backdrop-filter:blur(24px);transform:translateX(-105%);transition:transform .3s cubic-bezier(.2,.8,.2,1);overflow-y:auto;overscroll-behavior:contain}
-.sidebar.open{transform:translateX(0)}
-.sideTop{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px;border-bottom:1px solid rgba(255,255,255,.07)}
-.sideTitle{display:flex;align-items:center;gap:10px;min-width:0}.sideTitle>div{display:flex;flex-direction:column;min-width:0}.sideTitle b{font-size:16px}.sideTitle small{color:var(--muted);font-size:11px;margin-top:2px}
-.miniLogo{width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,#6366f1,#c026d3);box-shadow:0 0 25px rgba(139,92,246,.3)}
-.closeBtn{width:42px!important;height:42px!important;padding:0!important;margin:0!important;font-size:24px!important;display:grid!important;place-items:center!important;flex:0 0 42px!important}
-.sideNav{display:grid;gap:7px;padding:16px 0}.sideItem{width:100%!important;min-height:48px!important;margin:0!important;padding:11px 13px!important;display:flex!important;align-items:center!important;gap:11px!important;justify-content:flex-start!important;text-align:left!important;background:transparent!important;border:1px solid transparent!important;box-shadow:none!important;border-radius:14px!important;color:#d8d1e8!important;font-size:14px!important;font-weight:650!important}.sideItem span{width:25px;text-align:center;font-size:18px}.sideItem:hover{background:rgba(139,92,246,.09)!important;border-color:rgba(196,181,253,.12)!important;transform:none!important;filter:none!important}.sideItem.active{background:linear-gradient(135deg,rgba(99,102,241,.95),rgba(168,85,247,.95))!important;color:#fff!important;border-color:transparent!important;box-shadow:0 10px 28px rgba(124,58,237,.28)!important}.sideBottom{margin-top:auto;padding-top:15px;border-top:1px solid rgba(255,255,255,.07)}.sideAccount{display:flex;align-items:center;gap:10px;padding:10px;border-radius:14px;background:rgba(255,255,255,.035)}.sideAccount>div:last-child{display:flex;flex-direction:column;min-width:0}.sideAccount b,.sideAccount small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sideAccount small{color:var(--muted);font-size:11px}.accountAvatar{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#7c3aed,#c026d3);font-weight:800}
-/* Hide old navigation completely */
-.legacyTabs{display:none!important}
-/* Buttons */
-button{font-family:inherit;min-height:42px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-button:focus-visible,.sideItem:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid rgba(192,132,252,.8);outline-offset:2px}
-.card{overflow:hidden}.toolbar{width:100%}.toolbar button,.log-toolbar button{flex:0 0 auto}.toolbar input,.log-toolbar input,.log-toolbar select{min-width:0}
-input,select,textarea{max-width:100%;font-size:14px}
-input[type=checkbox]{width:auto;max-width:none;accent-color:#8b5cf6}
-/* Mobile-friendly controls and tables */
-.tableWrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{min-width:650px}
-.avatar{width:36px;height:36px;border-radius:12px;object-fit:cover;vertical-align:middle;margin-right:8px}
-.userrow td:first-child{cursor:pointer}
-.profile{align-items:start}.profile h2{overflow-wrap:anywhere}.kv{min-width:0}.kv b{overflow-wrap:anywhere}
-.log-row{min-width:0}.log-details{overflow-wrap:anywhere;white-space:normal;word-break:break-word}.log-ip{overflow-wrap:anywhere;word-break:break-word}
-.ripple{position:absolute!important;border-radius:50%;pointer-events:none;background:rgba(255,255,255,.25);transform:scale(0);animation:ripple .6s ease-out}
-@keyframes ripple{to{transform:scale(2.4);opacity:0}}@keyframes pulse{0%,100%{opacity:.65;transform:scale(.9)}50%{opacity:1;transform:scale(1.15)}}
-@media(max-width:700px){
- .container{padding:14px 12px 55px}
- .header{padding-bottom:16px;align-items:flex-start}
- .header .brand{gap:9px;align-items:flex-start}
- .header .logo{width:44px;height:44px;flex:0 0 44px;border-radius:14px;font-size:21px}
- .header h1{font-size:1.25rem}.header .sub{font-size:11px}.header .brand>div:last-child>div:last-child{font-size:12px;white-space:normal}
- .headerActions{gap:6px}.livePill{display:none}.headerActions .gray{padding:9px 12px!important;font-size:12px}
- .card{padding:16px;border-radius:18px;margin-bottom:12px}.hero{padding:20px}
- .grid{gap:9px}.stat{padding:13px}.stat b{font-size:22px}
- .toolbar,.log-toolbar{display:grid;grid-template-columns:1fr;gap:8px}.toolbar>* , .log-toolbar>*{width:100%!important;margin:0!important}.toolbar button,.log-toolbar button{min-height:44px}
- .profile{grid-template-columns:1fr;gap:14px}.profileAvatar{width:86px;height:86px;border-radius:22px}.kv{grid-template-columns:105px minmax(0,1fr);font-size:13px}
- .log-row{grid-template-columns:1fr;gap:7px;padding:13px}.log-title{font-size:13px}.log-time,.log-ip{font-size:10px}
- .card>button:not(.ghost){margin:5px 0;width:100%}
- .sideItem{min-height:50px!important;font-size:15px!important}
-}
-@media(max-width:380px){.grid{grid-template-columns:1fr}.header h1{font-size:1.1rem}.header .menuBtn{width:44px!important;height:44px!important;flex-basis:44px!important}.kv{grid-template-columns:1fr}.kv b{margin-bottom:8px}}
-
-
-/* ===== SerkovTools V9 dashboard ===== */
-.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#c4b5fd}.heroTop,.sectionHead{display:flex;align-items:center;justify-content:space-between;gap:14px}.refreshMain{width:auto!important;min-width:110px!important}.dashboardStatus{margin-top:20px}.statusGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.statusBox{padding:14px;border:1px solid rgba(196,181,253,.12);border-radius:16px;background:rgba(255,255,255,.025);min-width:0}.statusBox .label{font-size:11px;color:var(--muted);margin-bottom:7px}.statusBox .value{font-weight:800;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.statusOnline{color:#86efac}.statusOffline{color:#fb7185}.dashboardGrid{margin:12px 0}.dashboardGrid .stat{min-height:118px;position:relative;overflow:hidden}.dashboardGrid .stat:after{content:"";position:absolute;width:90px;height:90px;right:-30px;bottom:-35px;border-radius:50%;background:rgba(139,92,246,.12);filter:blur(2px)}.statIcon{font-size:20px;margin-bottom:10px}.statMeta{font-size:11px;color:var(--muted);margin-top:5px}.quickActions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.quickActions button{margin:0!important;width:100%!important}.dashboardMini{display:flex;align-items:center;gap:10px}.dashboardMini strong{font-size:20px}.dashboardMini span{font-size:11px;color:var(--muted)}@media(max-width:800px){.statusGrid{grid-template-columns:repeat(2,1fr)}.quickActions{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){.heroTop,.sectionHead{align-items:flex-start}.heroTop{flex-direction:column}.refreshMain{width:100%!important}.statusGrid{grid-template-columns:1fr 1fr}.quickActions{grid-template-columns:1fr}.dashboardGrid{grid-template-columns:1fr 1fr}}@media(max-width:380px){.statusGrid,.dashboardGrid{grid-template-columns:1fr}}
-</style>
-</head>
-<body data-my-level="${admin.level || 0}">
-<div class="container">
-  <div class="header">
-    <div class="brand"><button id="menuOpenBtn" type="button" class="menuBtn ghost" aria-label="Открыть меню" aria-controls="sidebar" aria-expanded="false">☰</button><div class="logo">⚡</div><div><h1>SerkovTools</h1><div class="sub">Центр управления сервером</div><div style="margin-top:6px">Вы: <b>${admin.username}</b> · <span class="badge">${admin.role_name || 'Без роли'}</span> <span class="mutedSep">•</span> ур. ${admin.level || 0}</div>
-    </div></div>
-    <div class="headerActions"><span class="livePill"><i></i> Панель онлайн</span><a href="/logout"><button class="gray">Выйти</button></a></div>
-  </div>
-
-  <div id="sidebarOverlay" class="sidebarOverlay" onclick="closeSidebar()"></div>
-  <aside id="sidebar" class="sidebar">
-    <div class="sideTop"><div class="sideTitle"><span class="miniLogo">⚡</span><div><b>SerkovTools</b><small>Навигация</small></div></div><button class="ghost closeBtn" onclick="closeSidebar()">×</button></div>
-    <div class="sideNav">
-      <button class="sideItem active" data-tab="main" onclick="showTab('main');closeSidebar()"><span>⌂</span><b>Главная</b></button>
-      ${hasPermission(admin,'toggle_antisliv') ? '<button class="sideItem" data-tab="antisliv" onclick="showTab(\'antisliv\', event);closeSidebar()"><span>🛡</span><b>Anti-Sliv</b></button>' : ''}
-      ${hasPermission(admin,'manage_admins') ? '<button class="sideItem" data-tab="admins" onclick="showTab(\'admins\', event);closeSidebar()"><span>♟</span><b>Админы</b></button>' : ''}
-      ${hasPermission(admin,'manage_roles') ? '<button class="sideItem" data-tab="roles" onclick="showTab(\'roles\', event);closeSidebar()"><span>◈</span><b>Уровни</b></button>' : ''}
-      ${hasPermission(admin,'manage_ipbans') || hasPermission(admin,'manage_admins') ? '<button class="sideItem" data-tab="ipbans" onclick="showTab(\'ipbans\', event);closeSidebar()"><span>⌁</span><b>Баны IP</b></button>' : ''}
-      ${hasPermission(admin,'view_users') ? '<button class="sideItem" data-tab="users" onclick="showTab(\'users\', event);closeSidebar()"><span>♙</span><b>Пользователи</b></button>' : ''}
-      ${hasPermission(admin,'manage_discord_roles') ? '<button class="sideItem" data-tab="droles" onclick="showTab(\'droles\', event);closeSidebar()"><span>◎</span><b>Роли Discord</b></button>' : ''}
-      ${hasPermission(admin,'view_logs') ? '<button class="sideItem" data-tab="logs" onclick="showTab(\'logs\', event);closeSidebar()"><span>▤</span><b>Логи</b></button>' : ''}
-    </div>
-    <div class="sideBottom"><div class="sideAccount"><div class="accountAvatar">${String(admin.username||'A').slice(0,1).toUpperCase()}</div><div><b>${admin.username}</b><small>${admin.role_name || 'Без роли'}</small></div></div></div>
-  </aside>
-
-  <!-- ГЛАВНАЯ -->
-  <div id="tab-main">
-    <section class="hero card">
-      <div class="heroTop"><div><span class="eyebrow">LIVE MONITOR</span><h2 style="margin:8px 0 4px">Состояние сервера</h2><p class="sub">Показатели обновляются через защищённый мост с Wispbyte.</p></div><button class="ghost refreshMain" type="button" onclick="refreshDashboard()">↻ Обновить</button></div>
-      <div id="dashboardStatus" class="dashboardStatus"><div class="empty">Загрузка данных бота…</div></div>
-    </section>
-    <div id="dashboardStats" class="grid dashboardGrid"></div>
-    <section class="card"><div class="sectionHead"><div><h3>Быстрые действия</h3><p class="sub">Управление доступно согласно вашей роли.</p></div></div>
-      <div class="quickActions">
-        ${hasPermission(admin,'view_status') ? '<button class="blue" type="button" onclick="getStatus()">⚡ Проверить статус</button>' : ''}
-        ${hasPermission(admin,'toggle_antisliv') ? '<button class="green" type="button" onclick="toggleAntiSliv()">🛡 Anti-Sliv</button>' : ''}
-        ${hasPermission(admin,'restart_bot') ? '<button class="red" type="button" onclick="restartBot()">🔄 Рестарт</button>' : ''}
-        ${hasPermission(admin,'view_stats') ? '<button class="purple" type="button" onclick="getStats()">📊 Подробная статистика</button>' : ''}
-      </div>
-    </section>
-    <section class="card"><div class="sectionHead"><div><h3>Ответ системы</h3><p class="sub">Последняя операция панели.</p></div></div><pre id="result">Готово к работе</pre></section>
-  </div>
-
-  <!-- ANTI-SLIV -->
-  <div id="tab-antisliv" class="hidden">
-    <div class="card">
-      <h3>Настройки Anti-Sliv</h3>
-      <div style="margin:10px 0"><label>Лимит попыток:</label><br><input type="number" id="maxAttempts" min="1" max="100" style="width:120px"></div>
-      <div style="margin:10px 0"><label>Защищаемые роли (ID через запятую, пусто = все):</label><br><input id="protectedRoles" style="width:100%"></div>
-      <div style="margin:10px 0"><label>Разрешённые роли (могут выдавать):</label><br><input id="allowedRoles" style="width:100%"></div>
-      <div style="margin:10px 0"><label>Пользователи-исключения:</label><br><input id="allowedUsers" style="width:100%"></div>
-      <div style="margin:10px 0"><label>Роли с доступом к командам:</label><br><input id="commandAccessRoles" style="width:100%"></div>
-      <div style="margin:10px 0"><label>Роль /сброспопыток:</label><br><input id="resetRole" style="width:100%"></div>
-      <button class="green" onclick="saveAntiSliv()">💾 Сохранить</button>
-    </div>
-  </div>
-
-  <!-- АДМИНЫ -->
-  <div id="tab-admins" class="hidden">
-    <div class="card">
-      <h3>Создать админа</h3>
-      <input id="newUser" placeholder="Логин">
-      <input id="newPass" type="password" placeholder="Пароль">
-      <select id="newRole"></select>
-      <button class="green" onclick="createAdmin()">Создать</button>
-    </div>
-    <div class="card"><h3>Список админов</h3><div id="adminsList"></div></div>
-  </div>
-
-  <!-- УРОВНИ -->
-  <div id="tab-roles" class="hidden">
-    <div class="card">
-      <h3>Создать уровень</h3>
-      <input id="roleName" placeholder="Название">
-      <input id="roleLevel" type="number" placeholder="Уровень (1-99)" style="width:140px">
-      <div style="margin:14px 0;line-height:2">
-        <label><input type="checkbox" value="view_status"> Статус</label>
-        <label><input type="checkbox" value="toggle_antisliv"> Anti-Sliv</label>
-        <label><input type="checkbox" value="restart_bot"> Рестарт</label>
-        <label><input type="checkbox" value="view_logs"> Логи</label>
-        <label><input type="checkbox" value="manage_admins"> Админы</label>
-        <label><input type="checkbox" value="manage_roles"> Уровни</label>
-        <label><input type="checkbox" value="view_stats"> Статистика</label>
-        <label><input type="checkbox" value="manage_ipbans"> Баны IP</label>
-        <label><input type="checkbox" value="view_users"> Пользователи</label><label><input type="checkbox" value="edit_users"> Изменение пользователей</label><label><input type="checkbox" value="delete_users"> Удаление пользователей</label><label><input type="checkbox" value="manage_discord_roles"> Роли Discord</label>
-      </div>
-      <button class="green" onclick="createRole()">Создать уровень</button>
-    </div>
-    <div class="card"><h3>Существующие уровни</h3><div id="rolesList"></div></div>
-  </div>
-
-  <!-- БАНЫ IP -->
-  <div id="tab-ipbans" class="hidden">
-    <div class="card">
-      <h3>Забанить IP</h3>
-      <input id="banIp" placeholder="IP адрес">
-      <input id="banReason" placeholder="Причина">
-      <button class="red" onclick="banIp()">Забанить</button>
-    </div>
-    <div class="card">
-      <h3>Забаненные IP <span class="badge" id="ipBanCount">0</span></h3>
-      <div class="log-toolbar"><input id="ipBanSearch" placeholder="Поиск IP или причине..." oninput="filterIpBans()"><button class="blue" onclick="loadIpBans()">↻ Обновить</button></div>
-      <div id="ipBansList" style="margin-top:14px"></div>
-    </div>
-  </div>
-
-  <!-- ПОЛЬЗОВАТЕЛИ -->
-  <div id="tab-users" class="hidden">
-    <div class="card hero"><h2>Пользователи сервера</h2><div class="sub">Открой профиль пользователя, чтобы посмотреть и изменить доступные данные.</div><div class="toolbar" style="margin-top:15px"><input class="search" id="userSearch" placeholder="Поиск по имени, ID или никнейму" oninput="renderUsers()"><button class="blue" onclick="loadUsers()">↻ Обновить</button></div></div>
-    <div class="card"><div id="usersList">Загрузка...</div></div>
-  </div>
-
-  <!-- ПРОФИЛЬ -->
-  <div id="tab-profile" class="hidden"><div id="profileBox"></div></div>
-
-  <!-- DISCORD РОЛИ -->
-  <div id="tab-droles" class="hidden">
-    <div class="card hero"><h2>Роли Discord</h2><div class="sub">Создание, изменение и удаление серверных ролей.</div></div>
-    <div class="card"><h3>Создать роль</h3><input id="droleName" placeholder="Название роли"><input id="droleColor" placeholder="Цвет #8b5cf6"><label><input type="checkbox" id="droleHoist"> Показывать отдельно</label><button class="green" onclick="createDiscordRole()">Создать роль</button></div>
-    <div class="card"><div id="drolesList">Загрузка...</div></div>
-  </div>
-
-  <!-- ЛОГИ -->
-  <div id="tab-logs" class="hidden">
-    <div class="card hero">
-      <h2>Журнал событий</h2><div class="sub">Входы, действия администраторов и безопасность в одном месте.</div>
-      <div class="log-toolbar"><input id="logSearch" placeholder="Поиск по логам..." oninput="filterLogs()"><select id="logType" onchange="filterLogs()"><option value="all">Все события</option><option value="login">Входы</option><option value="action">Действия</option></select><button class="blue" onclick="loadLogs();loadActions()">↻ Обновить</button></div>
-    </div>
-    <div class="card"><h3>Логи входов <span class="badge" id="loginCount">0</span></h3><div id="logsList" class="log-list"></div></div>
-    <div class="card"><h3>Логи действий <span class="badge" id="actionCount">0</span></h3><div id="actionsList" class="log-list"></div></div>
-  </div>
-</div>
-
-<script src="/panel-client.js?v=9" defer></script>
-
-</body>
-</html>`);
+// ---------- Main panel ----------
+app.get('/panel-client.js',(req,res)=>res.sendFile(path.join(__dirname,'panel-client.js')));
+app.get('/',requireAdmin,async(req,res)=>{
+  const admin=await getAdminById(req.session.adminId); if(!admin)return res.redirect('/logout');
+  const safe=JSON.stringify({id:admin.id,vkId:admin.vk_id||'',discordId:admin.discord_id||'',nickname:admin.nickname||'',position:admin.position||'',level:Number(admin.admin_level||admin.role_level||0),role:admin.role_name||'',avatar:admin.vk_avatar||''}).replace(/</g,'\\u003c');
+  res.send(`<!doctype html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SerkovTools — Администрация</title><style>
+:root{--bg:#070711;--panel:rgba(18,17,28,.84);--panel2:rgba(27,24,43,.82);--line:rgba(255,255,255,.10);--text:#f7f5ff;--muted:#a39bb7;--blue:#238cff;--purple:#8b5cf6;--pink:#d946ef;--good:#42e6a4;--bad:#ff6682}*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 15% 0%,#43208455,transparent 34%),radial-gradient(circle at 100% 30%,#0b5fff22,transparent 30%),var(--bg)}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(#a78bfa08 1px,transparent 1px),linear-gradient(90deg,#a78bfa08 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(#000,transparent 88%);z-index:-1}.app{display:flex;min-height:100vh}.sidebar{width:300px;flex:0 0 300px;padding:18px;position:fixed;inset:0 auto 0 0;z-index:50;background:linear-gradient(180deg,#111021ee,#0a0914f5);border-right:1px solid var(--line);backdrop-filter:blur(26px);transform:translateX(0);transition:.28s}.sideUser{display:flex;align-items:center;gap:12px;padding:10px 10px 16px;border-bottom:1px solid var(--line);cursor:pointer}.avatar{width:52px;height:52px;border-radius:17px;object-fit:cover;background:linear-gradient(135deg,#246bff,#7c3aed);border:2px solid #ffffff1b}.sideUser b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sideUser small{display:block;color:var(--muted);margin-top:4px}.sideNav{padding-top:16px}.navBtn{width:100%;border:1px solid transparent;background:transparent;color:#e7e2f1;padding:13px 14px;border-radius:14px;text-align:left;display:flex;align-items:center;gap:11px;font-weight:750;cursor:pointer;margin:4px 0}.navBtn:hover{background:#ffffff08;border-color:#ffffff12}.navBtn.active{background:linear-gradient(135deg,#1f73d7,#6d43df);box-shadow:0 14px 34px #347df733}.sideBottom{position:absolute;left:18px;right:18px;bottom:18px}.logout{display:block;text-decoration:none;color:#bfb7ce;padding:11px 12px;border-radius:12px;background:#ffffff05;text-align:center}.content{margin-left:300px;width:calc(100% - 300px);padding:28px;max-width:1500px}.mobileHead{display:none}.page{display:none;animation:fade .3s ease}.page.active{display:block}@keyframes fade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}.hero{padding:28px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,#21153bd9,#0d0b17e8);box-shadow:0 25px 70px #0005}.eyebrow{color:#c7b8ff;font-size:11px;letter-spacing:.16em;text-transform:uppercase}.hero h1{font-size:38px;margin:9px 0 6px;letter-spacing:-.035em}.muted{color:var(--muted)}.profileTop{display:flex;align-items:center;gap:24px}.profileAvatar{width:118px;height:118px;border-radius:32px;object-fit:cover;background:linear-gradient(135deg,#1978ff,#8b5cf6);border:1px solid #ffffff22;box-shadow:0 20px 60px #0006}.level{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;background:#1674dd26;color:#64aaff;border:1px solid #2e8dff55;font-weight:800}.position{font-size:19px;margin-top:9px}.links{display:flex;gap:9px;margin-top:16px;flex-wrap:wrap}.chip{padding:9px 12px;border-radius:12px;background:#ffffff08;border:1px solid #ffffff0d;color:#ddd7e8;text-decoration:none}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:18px}.metric{padding:20px;border:1px solid var(--line);border-radius:20px;background:#11101ae8;position:relative;overflow:hidden}.metric:after{content:"";position:absolute;width:90px;height:90px;right:-30px;bottom:-35px;border-radius:50%;background:#7437ff2c;filter:blur(2px)}.metric b{font-size:32px;display:block;margin-top:7px}.metric span{color:var(--muted);font-size:13px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn{border:0;border-radius:14px;padding:12px 16px;color:#fff;font-weight:800;cursor:pointer;background:#ffffff0d;border:1px solid #ffffff10}.btn.primary{background:linear-gradient(135deg,#1676ff,#8146ef)}.btn.danger{background:linear-gradient(135deg,#e21b4d,#ff465a)}.btn:hover{filter:brightness(1.08);transform:translateY(-1px)}.section{margin-top:18px;padding:22px;border:1px solid var(--line);border-radius:24px;background:#11101ae8}.sectionHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}.section h2,.section h3{margin:0}.statusGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.status{padding:16px;border:1px solid var(--line);border-radius:17px;background:#ffffff04}.status small{color:var(--muted)}.status b{display:block;margin-top:8px;font-size:17px}.online{color:#74f2b4}.offline{color:#ff6d88}.adminHead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}.search{width:100%;padding:13px 15px;border-radius:14px;border:1px solid var(--line);background:#08070f;color:#fff;outline:none}.search:focus{border-color:#5f9dff;box-shadow:0 0 0 4px #258cff16}.adminTable{width:100%;border-collapse:separate;border-spacing:0 8px}.adminTable th{padding:8px 14px;color:#8f879f;font-size:11px;text-align:left;text-transform:uppercase;letter-spacing:.08em}.adminTable td{padding:14px;background:#111018;border-top:1px solid #ffffff09;border-bottom:1px solid #ffffff09}.adminTable td:first-child{border-left:1px solid #ffffff09;border-radius:15px 0 0 15px}.adminTable td:last-child{border-right:1px solid #ffffff09;border-radius:0 15px 15px 0}.adminUser{display:flex;align-items:center;gap:11px;min-width:210px}.adminAvatar{width:44px;height:44px;border-radius:14px;object-fit:cover;background:#262332}.adminName b{display:block}.adminName span{display:block;color:#8f9bd0;font-size:12px;margin-top:3px}.level8{color:#b28cff}.count{font-size:19px;font-weight:850}.empty{text-align:center;padding:40px;color:var(--muted)}.modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:18px;background:#0009;backdrop-filter:blur(12px)}.modal.open{display:flex}.modalCard{width:min(720px,100%);max-height:86vh;overflow:auto;padding:25px;border:1px solid #ffffff16;border-radius:25px;background:linear-gradient(145deg,#1b1430,#0b0a13);box-shadow:0 35px 100px #000b}.modalGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.modalStat{padding:15px;border-radius:16px;background:#ffffff06;border:1px solid #ffffff0d}.modalStat small{color:var(--muted)}.modalStat b{display:block;font-size:24px;margin-top:5px}.close{float:right;width:auto}.toast{position:fixed;right:20px;bottom:20px;z-index:200;padding:13px 16px;border-radius:14px;background:#191523;border:1px solid #ffffff15;box-shadow:0 18px 40px #0008}.toast.bad{border-color:#ff5c7733;color:#ff9aad}.createForm{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.createForm label{font-size:11px;color:#aaa0b8}.createForm input,.createForm select,.createForm textarea{width:100%;margin-top:6px;padding:12px;border-radius:12px;border:1px solid var(--line);background:#090811;color:#fff}.createForm textarea{min-height:90px;resize:vertical}.createForm .full{grid-column:1/-1}.danger{color:#ff7b92}.hidden{display:none!important}@media(max-width:900px){.sidebar{transform:translateX(-105%);box-shadow:20px 0 70px #0008}.sidebar.open{transform:translateX(0)}.content{margin-left:0;width:100%;padding:14px}.mobileHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.menu{width:auto;padding:10px 13px}.statusGrid{grid-template-columns:1fr 1fr}.metrics{grid-template-columns:1fr 1fr}.hero h1{font-size:31px}.profileTop{align-items:flex-start}.adminTable{min-width:720px}.tableWrap{overflow-x:auto}.sidebarOverlay{display:none;position:fixed;inset:0;z-index:40;background:#0008}.sidebarOverlay.open{display:block}}@media(max-width:560px){.hero{padding:20px;border-radius:22px}.profileTop{flex-direction:column}.profileAvatar{width:96px;height:96px}.metrics{grid-template-columns:1fr}.statusGrid{grid-template-columns:1fr 1fr}.modalGrid{grid-template-columns:1fr}.createForm{grid-template-columns:1fr}.createForm .full{grid-column:auto}.adminHead{align-items:stretch;flex-direction:column}}
+</style></head><body data-admin='${safe}'><div class="app"><div id="sidebarOverlay" class="sidebarOverlay"></div><aside class="sidebar" id="sidebar"><div class="sideUser" onclick="showPage('me')"><img id="sideAvatar" class="avatar" src="${admin.vk_avatar||''}" onerror="this.style.display='none'"><div><b>${escapeHtml(admin.nickname||'Администратор')}</b><small>${escapeHtml(admin.position||'Администратор')} · уровень ${Number(admin.admin_level||admin.role_level||0)}</small></div></div><nav class="sideNav"><button class="navBtn active" data-page="me">👤 <span>Моя страница</span></button><button class="navBtn" data-page="admins">👥 <span>Администрация</span></button></nav><div class="sideBottom"><a class="logout" href="/logout">Выйти</a></div></aside><main class="content"><div class="mobileHead"><button class="btn menu" id="menuBtn">☰</button><b>SerkovTools</b><span></span></div><section id="page-me" class="page active"><div class="hero"><span class="eyebrow">ЛИЧНЫЙ ПРОФИЛЬ</span><div class="profileTop" style="margin-top:15px"><img class="profileAvatar" src="${admin.vk_avatar||''}" onerror="this.style.visibility='hidden'"><div><h1>${escapeHtml(admin.nickname||'Администратор')}</h1><span class="level">◈ ${Number(admin.admin_level||admin.role_level||0)} уровень</span><div class="position">${escapeHtml(admin.position||'Администратор')}</div><div class="links"><a class="chip" href="https://vk.com/id${encodeURIComponent(admin.vk_id||'')}" target="_blank">VK</a><a class="chip" href="https://discord.com/users/${encodeURIComponent(admin.discord_id||'')}" target="_blank">Discord</a></div></div></div></div><div class="metrics"><div class="metric"><span>Сообщения за неделю</span><b id="myMessages">0</b></div><div class="metric"><span>Текущий период</span><b id="weekLabel">—</b></div><div class="metric"><span>Обновлено</span><b id="updatedAt">—</b></div></div><div class="section"><div class="sectionHead"><div><h2>Состояние сервера</h2><span class="muted">Данные приходят через защищённый мост с Wispbyte.</span></div><button class="btn primary" id="refreshBtn">↻ Обновить</button></div><div id="statusGrid" class="statusGrid"><div class="empty">Загрузка…</div></div><div class="actions"><button class="btn primary" id="statusBtn">⚡ Проверить статус</button><button class="btn" id="statsBtn">📊 Подробная статистика</button></div></div></section><section id="page-admins" class="page"><div class="hero"><div class="adminHead"><div><span class="eyebrow">АДМИНИСТРАЦИЯ</span><h1 style="margin-bottom:4px">Администраторы</h1><div class="muted">Только ник, должность, уровень и сообщения за текущую неделю.</div></div>${hasPermission(admin,'manage_admins')?'<button class="btn primary" id="openCreate">＋ Добавить</button>':''}</div><div style="margin-top:18px"><input id="adminSearch" class="search" placeholder="Поиск по нику или должности"></div></div><div class="section"><div id="adminsList" class="tableWrap"><div class="empty">Загрузка…</div></div></div></section></main></div><div class="modal" id="statsModal"><div class="modalCard"><button class="btn close" id="closeStats">Закрыть</button><span class="eyebrow">LIVE STATISTICS</span><h2 style="margin:8px 0 5px">Статистика сервера</h2><p class="muted">Без сырого JSON — показатели отображаются карточками.</p><div id="modalStats" class="modalGrid" style="margin-top:16px"></div></div></div><div class="modal" id="createModal"><div class="modalCard"><button class="btn close" id="closeCreate">Закрыть</button><span class="eyebrow">РЕГИСТРАЦИЯ</span><h2 style="margin:8px 0 5px">Создать администратора</h2><p class="muted">Профиль получает доступ только после создания здесь.</p><form id="createForm" class="createForm"><label>VK ID<input name="vk_id" required placeholder="Например: 123456789"></label><label>Discord ID<input name="discord_id" required placeholder="Например: 123456789012345678"></label><label>Уровень 1–8<select name="admin_level" required>${Array.from({length:8},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}</select></label><label>Должность<input name="position" required placeholder="Например: Старший модератор"></label><label class="full">Причина постановления на пост<textarea name="appointment_reason" required placeholder="Причина назначения"></textarea></label><div class="full"><button class="btn primary" type="submit">Создать профиль</button></div></form></div></div><script>window.__ADMIN__=${safe}</script><script src="/panel-client.js?v=10" defer></script></body></html>`);
 });
 
 // ---------- API ----------
-app.get('/api/status', requirePermission('view_status'), (req, res) => {
-    res.json(bridgeState || { discord:'offline', vk:'offline', telegram:'offline', antiSliv:false, ping:null, uptime:0, members:0, maxAttempts:0 });
-});
-
-app.post('/api/antisliv/toggle', requirePermission('toggle_antisliv'), async (req, res) => {
-    const cmd = queueCommand('toggle_antisliv', {});
-    await logAction(req.session.username, 'TOGGLE_ANTISLIV', 'Запрошено переключение Anti-Sliv', getClientIp(req));
-    res.json({ message: 'Команда отправлена боту', commandId: cmd.id });
-});
-
-app.post('/api/restart', requirePermission('restart_bot'), async (req, res) => {
-    const cmd = queueCommand('restart_bot', {});
-    await logAction(req.session.username, 'RESTART_BOT', 'Запрошен рестарт', getClientIp(req));
-    res.json({ message: 'Команда на рестарт отправлена боту', commandId: cmd.id });
-});
-
-app.get('/api/stats', requirePermission('view_stats'), (req, res) => {
-    res.json(bridgeStats || { date: '', limit: 0, attempts: [] });
-});
-
-app.get('/api/antisliv/settings', requirePermission('toggle_antisliv'), (req, res) => {
-    res.json(bridgeSettings || { enabled:false, maxAttempts:0, protectedRoles:[], allowedRoles:[], allowedUsers:[], commandAccessRoles:[], resetAttemptsRoleId:'' });
-});
-
-app.post('/api/antisliv/settings', requirePermission('toggle_antisliv'), async (req, res) => {
-    const cmd = queueCommand('update_antisliv_settings', req.body || {});
-    await logAction(req.session.username, 'EDIT_ANTISLIV', 'Изменены настройки Anti-Sliv', getClientIp(req));
-    res.json({ success: true, message: 'Настройки отправлены боту', commandId: cmd.id });
-});
-
-app.get('/api/logs', requirePermission('view_logs'), async (req, res) => {
-    const rows = await db.all(`SELECT * FROM web_logins ORDER BY id DESC LIMIT 150`);
-    res.json(rows);
-});
-
-app.get('/api/actions', requirePermission('view_logs'), async (req, res) => {
-    const rows = await db.all(`SELECT * FROM web_actions ORDER BY id DESC LIMIT 150`);
-    res.json(rows);
-});
-
-app.get('/api/admins', requirePermission('manage_admins'), async (req, res) => {
-    const rows = await db.all(`
-        SELECT a.id, a.username, r.name as role_name, r.level
-        FROM web_admins a LEFT JOIN web_roles r ON a.role_id = r.id
-        ORDER BY r.level DESC`);
-    res.json(rows);
-});
-
-app.post('/api/admins', requirePermission('manage_admins'), async (req, res) => {
-    const { username, password, role_id } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Нужны логин и пароль' });
-    try {
-        const hash = await bcrypt.hash(password, 10);
-        await db.run(`INSERT INTO web_admins (username, password_hash, role_id) VALUES (?, ?, ?)`,
-            [username, hash, role_id || null]);
-        const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-        await logAction(req.session.username, 'CREATE_ADMIN', `Создан админ: ${username}`, ip);
-        res.json({ message: 'Админ создан' });
-    } catch {
-        res.status(400).json({ error: 'Такой логин уже существует' });
-    }
-});
-
-app.post('/api/admins/:id/role', requirePermission('manage_admins'), async (req, res) => {
-    await db.run(`UPDATE web_admins SET role_id = ? WHERE id = ?`, [req.body.role_id, req.params.id]);
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    await logAction(req.session.username, 'CHANGE_ROLE', `Сменена роль админа ID ${req.params.id}`, ip);
-    res.json({ ok: true });
-});
-
-app.delete('/api/admins/:id', requirePermission('manage_admins'), async (req, res) => {
-    await db.run(`DELETE FROM web_admins WHERE id = ?`, [req.params.id]);
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    await logAction(req.session.username, 'DELETE_ADMIN', `Удалён админ ID ${req.params.id}`, ip);
-    res.json({ ok: true });
-});
-
-app.get('/api/roles', requirePermission('manage_roles'), async (req, res) => {
-    const rows = await db.all(`SELECT * FROM web_roles ORDER BY level DESC`);
-    res.json(rows);
-});
-
-app.post('/api/roles', requirePermission('manage_roles'), async (req, res) => {
-    const { name, level, permissions } = req.body;
-    try {
-        await db.run(`INSERT INTO web_roles (name, level, permissions) VALUES (?, ?, ?)`,
-            [name, Number(level)||1, JSON.stringify(permissions||[])]);
-        const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-        await logAction(req.session.username, 'CREATE_ROLE', `Создан уровень: ${name}`, ip);
-        res.json({ message: 'Уровень создан' });
-    } catch {
-        res.status(400).json({ error: 'Ошибка создания уровня' });
-    }
-});
-
-
-app.patch('/api/roles/:id', requirePermission('manage_roles'), async (req,res)=>{const row=await db.get('SELECT * FROM web_roles WHERE id=?',[req.params.id]);if(!row)return res.status(404).json({error:'Роль не найдена'});if(req.body.name)await db.run('UPDATE web_roles SET name=? WHERE id=?',[String(req.body.name),req.params.id]);if(req.body.level!==undefined)await db.run('UPDATE web_roles SET level=? WHERE id=?',[Number(req.body.level)||1,req.params.id]);if(Array.isArray(req.body.permissions))await db.run('UPDATE web_roles SET permissions=? WHERE id=?',[JSON.stringify(req.body.permissions),req.params.id]);await logAction(req.session.username,'EDIT_ROLE',`Изменена веб-роль ${row.name}`,getClientIp(req));res.json({message:'Роль изменена'});});
-app.delete('/api/roles/:id', requirePermission('manage_roles'), async (req,res)=>{const row=await db.get('SELECT * FROM web_roles WHERE id=?',[req.params.id]);if(!row)return res.status(404).json({error:'Роль не найдена'});if(row.name==='Владелец')return res.status(400).json({error:'Нельзя удалить роль Владелец'});await db.run('UPDATE web_admins SET role_id=NULL WHERE role_id=?',[req.params.id]);await db.run('DELETE FROM web_roles WHERE id=?',[req.params.id]);await logAction(req.session.username,'DELETE_ROLE',`Удалена веб-роль ${row.name}`,getClientIp(req));res.json({message:'Роль удалена'});});
-
-app.get('/api/ipbans', requirePermission('manage_ipbans'), async (req, res) => {
-    const rows = await db.all(`SELECT * FROM web_ip_bans ORDER BY id DESC`);
-    res.json(rows);
-});
-
-app.post('/api/ipbans', requirePermission('manage_ipbans'), async (req, res) => {
-    const { ip, reason } = req.body;
-    if (!ip) return res.status(400).json({ error: 'Укажите IP' });
-    try {
-        await db.run(`INSERT INTO web_ip_bans (ip, reason, banned_by) VALUES (?, ?, ?)`,
-            [ip.trim(), reason || 'Без причины', req.session.username]);
-        await logAction(req.session.username, 'BAN_IP', `Забанен IP: ${ip}`, ip);
-        res.json({ message: `IP ${ip} заблокирован` });
-    } catch {
-        res.status(400).json({ error: 'Этот IP уже забанен' });
-    }
-});
-
-app.delete('/api/ipbans/:id', requirePermission('manage_ipbans'), async (req, res) => {
-    const row = await db.get(`SELECT ip FROM web_ip_bans WHERE id = ?`, [req.params.id]);
-    if (!row) return res.status(404).json({ error: 'IP не найден' });
-    await db.run(`DELETE FROM web_ip_bans WHERE id = ?`, [req.params.id]);
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    await logAction(req.session.username, 'UNBAN_IP', `Разбанен ID ${req.params.id}`, ip);
-    res.json({ ok: true, message: `IP ${row.ip} разблокирован`, ip: row.ip });
-});
-
-app.get('/api/users', requirePermission('view_users'), (req,res)=>res.json({users:bridgeUsers}));
-app.get('/api/users/:id', requirePermission('view_users'), (req,res)=>{ const u=bridgeUsers.find(x=>x.id===req.params.id); if(!u)return res.status(404).json({error:'Пользователь не найден'}); res.json({user:u,roles:bridgeDiscordRoles}); });
-app.patch('/api/users/:id', requirePermission('edit_users'), async (req,res)=>{ const cmd=queueCommand('edit_user',{userId:String(req.params.id),nickname:String(req.body.nickname||''),roles:Array.isArray(req.body.roles)?req.body.roles.map(String):[]}); await logAction(req.session.username,'EDIT_USER',`Изменён пользователь ${req.params.id}`,getClientIp(req)); res.json({message:'Изменения отправлены боту',commandId:cmd.id}); });
-app.delete('/api/users/:id', requirePermission('delete_users'), async (req,res)=>{ const cmd=queueCommand('kick_user',{userId:String(req.params.id)}); await logAction(req.session.username,'DELETE_USER',`Удалён пользователь ${req.params.id}`,getClientIp(req)); res.json({message:'Команда на удаление отправлена',commandId:cmd.id}); });
-app.get('/api/discord-roles', requirePermission('manage_discord_roles'), (req,res)=>res.json({roles:bridgeDiscordRoles}));
-app.post('/api/discord-roles', requirePermission('manage_discord_roles'), async (req,res)=>{if(!req.body.name)return res.status(400).json({error:'Укажите название'});const cmd=queueCommand('create_role',{name:String(req.body.name).slice(0,100),color:String(req.body.color||''),hoist:!!req.body.hoist});await logAction(req.session.username,'CREATE_DISCORD_ROLE',`Создание роли ${req.body.name}`,getClientIp(req));res.json({message:'Команда отправлена',commandId:cmd.id});});
-app.delete('/api/discord-roles/:id', requirePermission('manage_discord_roles'), async (req,res)=>{const cmd=queueCommand('delete_role',{roleId:String(req.params.id)});await logAction(req.session.username,'DELETE_DISCORD_ROLE',`Удаление роли ${req.params.id}`,getClientIp(req));res.json({message:'Команда отправлена',commandId:cmd.id});});
-
-app.listen(WEB_PORT, () => {
-    console.log(`[WEB] Панель запущена на порту ${WEB_PORT}`);
-});
-
+app.get('/api/status',requirePermission('view_status'),(req,res)=>res.json(bridgeState||{discord:'offline',vk:'offline',telegram:'offline',antiSliv:false,ping:null,uptime:0,members:0}));
+app.get('/api/stats',requirePermission('view_stats'),(req,res)=>res.json(bridgeStats||{}));
+app.get('/api/my-profile',requireAdmin,async(req,res)=>{const a=await getAdminById(req.session.adminId);res.json(a||{});});
+app.get('/api/admins',requireAdmin,async(req,res)=>{const rows=await db.all(`SELECT a.id,a.vk_id,a.discord_id,a.nickname,a.position,a.admin_level,a.vk_avatar FROM web_admins a ORDER BY a.admin_level DESC,a.nickname COLLATE NOCASE ASC`);res.json({admins:rows,stats:bridgeStats?.adminMessages||{},week:bridgeStats?.week||''});});
+app.post('/api/admins',requirePermission('manage_admins'),async(req,res)=>{const {vk_id,discord_id,position,appointment_reason,admin_level}=req.body;const level=Number(admin_level);if(!/^\\d+$/.test(String(vk_id||''))||!/^\\d+$/.test(String(discord_id||'')))return res.status(400).json({error:'VK ID и Discord ID должны быть числами'});if(level<1||level>8)return res.status(400).json({error:'Максимальный уровень — 8'});if(!position||!appointment_reason)return res.status(400).json({error:'Заполните должность и причину'});const exists=await db.get(`SELECT id FROM web_admins WHERE vk_id=? OR discord_id=?`,[String(vk_id),String(discord_id)]);if(exists)return res.status(400).json({error:'Такой VK ID или Discord ID уже зарегистрирован'});if(level>=Number(req.admin.admin_level||0))return res.status(403).json({error:'Нельзя создать администратора равного или выше вашего уровня'});let vkName='',avatar='';try{const tok=process.env.VK_SERVICE_TOKEN||'';if(tok){const u=await fetch('https://api.vk.com/method/users.get?'+new URLSearchParams({user_ids:String(vk_id),fields:'photo_200',access_token:tok,v:'5.199'})).then(r=>r.json());const x=u.response?.[0];if(x){vkName=`${x.first_name||''} ${x.last_name||''}`.trim();avatar=x.photo_200||'';}}}catch{}if(!vkName)vkName='VK '+String(vk_id);const role=await db.get(`SELECT id FROM web_roles WHERE level=? ORDER BY id LIMIT 1`,[level]);await db.run(`INSERT INTO web_admins (username,password_hash,role_id,vk_id,discord_id,nickname,position,appointment_reason,vk_avatar,admin_level) VALUES (?,?,?,?,?,?,?,?,?,?)`,[`vk_${vk_id}`,'',role?.id||null,String(vk_id),String(discord_id),vkName,String(position).trim(),String(appointment_reason).trim(),avatar,level]);await logAction(req.session.vkId,'CREATE_ADMIN',`Создан администратор VK ${vk_id}`,getClientIp(req));res.json({ok:true});});
+app.delete('/api/admins/:id',requirePermission('manage_admins'),async(req,res)=>{const row=await db.get(`SELECT * FROM web_admins WHERE id=?`,[req.params.id]);if(!row)return res.status(404).json({error:'Профиль не найден'});if(Number(row.admin_level||0)>=Number(req.admin.admin_level||0))return res.status(403).json({error:'Нельзя удалить администратора равного или более высокого уровня'});if(Number(row.id)===Number(req.admin.id))return res.status(400).json({error:'Нельзя удалить себя'});await db.run(`DELETE FROM web_admins WHERE id=?`,[req.params.id]);await logAction(req.session.vkId,'DELETE_ADMIN',`Удалён профиль ID ${req.params.id}`,getClientIp(req));res.json({ok:true});});
+app.get('/api/roles',requirePermission('manage_roles'),async(req,res)=>res.json(await db.all(`SELECT id,name,level,permissions FROM web_roles ORDER BY level DESC`)));
+app.post('/api/roles',requirePermission('manage_roles'),async(req,res)=>{const level=Number(req.body.level);if(level<1||level>8)return res.status(400).json({error:'Уровень должен быть от 1 до 8'});try{await db.run(`INSERT INTO web_roles(name,level,permissions) VALUES(?,?,?)`,[String(req.body.name||'Роль'),level,JSON.stringify(Array.isArray(req.body.permissions)?req.body.permissions:[])]);res.json({ok:true});}catch(e){res.status(400).json({error:'Такая роль уже существует'});}});
+app.delete('/api/roles/:id',requirePermission('manage_roles'),async(req,res)=>{const row=await db.get(`SELECT * FROM web_roles WHERE id=?`,[req.params.id]);if(!row)return res.status(404).json({error:'Роль не найдена'});const used=await db.get(`SELECT COUNT(*) c FROM web_admins WHERE role_id=?`,[row.id]);if(Number(used.c)>0)return res.status(400).json({error:'Сначала переназначьте администраторов с этой роли'});const owners=await db.get(`SELECT COUNT(*) c FROM web_roles WHERE level=8`);if(Number(row.level)===8&&Number(owners.c)<=1)return res.status(400).json({error:'Нельзя удалить последнюю роль 8 уровня'});await db.run(`DELETE FROM web_roles WHERE id=?`,[row.id]);await logAction(req.session.vkId,'DELETE_ROLE',`Удалена роль ${row.name}`,getClientIp(req));res.json({ok:true});});
+app.listen(WEB_PORT,()=>console.log(`[WEB] Панель запущена на порту ${WEB_PORT}`));
 
 })();
