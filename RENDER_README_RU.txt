@@ -1,54 +1,42 @@
-SERKOVTOOLS — ПАНЕЛЬ С АВТОРИЗАЦИЕЙ TELEGRAM
+SERKOVTOOLS — ПАНЕЛЬ С АВТОРИЗАЦИЕЙ ПО ЛОГИНУ И ПАРОЛЮ
 
 1. Render Environment
-Добавьте:
+Добавьте/проверьте:
 
 PANEL_BRIDGE_SECRET=тот_же_секрет_что_на_Wispbyte
 SESSION_SECRET=длинный_случайный_секрет
-TELEGRAM_CLIENT_ID=Client_ID_из_BotFather
-TELEGRAM_CLIENT_SECRET=Client_Secret_из_BotFather
-TELEGRAM_REDIRECT_URI=https://serkovtools-panel.onrender.com/auth/telegram/callback
-TELEGRAM_BOOTSTRAP_ID=ваш_Telegram_ID
-TELEGRAM_BOOTSTRAP_DISCORD_ID=ваш_Discord_ID
+ADMIN_USERNAME=логин_главного_админа
+ADMIN_PASSWORD=пароль_главного_админа
 
-Старые VK_CLIENT_ID, VK_CLIENT_SECRET, VK_REDIRECT_URI для этой версии не нужны.
+Telegram Client ID/Secret и TELEGRAM_* для авторизации панели больше не нужны.
 
-2. Telegram / BotFather
-Используйте Telegram-бота, который будет представлять приложение.
-В @BotFather откройте настройки бота и раздел Login / Web Login (название может отличаться в интерфейсе).
-Добавьте Allowed URL / Redirect URL:
-https://serkovtools-panel.onrender.com/auth/telegram/callback
+2. Авторизация
+Панель использует обычный логин + пароль.
+Главный аккаунт автоматически создаётся при первом запуске из ADMIN_USERNAME / ADMIN_PASSWORD и получает уровень 8.
 
-BotFather выдаст Client ID и Client Secret. Секрет храните только в Render.
-
-3. Авторизация
-Кнопка «Войти через Telegram» открывает официальный Telegram OAuth OIDC.
-После согласия Telegram возвращает code на callback. Сервер обменивает code на ID token, проверяет подпись Telegram и только после этого создаёт сессию.
-
-4. Bootstrap-владелец
-TELEGRAM_BOOTSTRAP_ID — ваш числовой Telegram ID.
-Если такого администратора ещё нет, при первом успешном входе он автоматически создаётся с уровнем 8 и ролью «Владелец».
-
-5. Добавление других администраторов
+3. Добавление администраторов
 В панели: Администрация → Добавить.
 Поля:
-- Telegram ID
+- Логин
+- Пароль
+- VK ID
 - Discord ID
-- причина назначения
 - уровень 1–8
 - должность
+- причина назначения
 
+После создания администратор может входить в панель по своему логину и паролю.
+VK ID сохраняется в профиле и используется для отображения VK-профиля/аватара (если задан VK_SERVICE_TOKEN).
 Обычный пользователь без созданного профиля в панель не попадёт.
 
-6. Render
+4. Ограничения
+- Максимальный уровень — 8.
+- Нельзя создать администратора равного или выше собственного уровня.
+- Нельзя удалить администратора равного или выше собственного уровня.
+- Нельзя удалить себя.
+
+5. Render
 Build Command: npm install
 Start Command: npm start
 
-Официальная документация Telegram Login:
-https://core.telegram.org/bots/telegram-login
-
-
-ИСПРАВЛЕНИЕ v14
-- В запрос Telegram OIDC добавлен обязательный параметр bot_id.
-- Для текущей конфигурации bot_id передаётся тем же числовым значением, что и TELEGRAM_CLIENT_ID (8805088937).
-- Redirect URI остаётся https://serkovtools-panel.onrender.com/auth/telegram/callback.
+Бот ↔ Render по-прежнему использует PANEL_BRIDGE_URL и PANEL_BRIDGE_SECRET.

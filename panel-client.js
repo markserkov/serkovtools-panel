@@ -53,7 +53,7 @@ function renderAdmins(){
   for(const a of arr){const count=Number(cachedStats[String(a.discord_id)]||0);const canDelete=Number(ADMIN.level||0)>Number(a.admin_level||0)&&Number(a.id)!==Number(ADMIN.id);html+=`<tr><td><div class="adminUser"><img class="adminAvatar" src="${esc(a.avatar||a.vk_avatar||'')}" onerror="this.style.visibility='hidden'"><div class="adminName"><b>${esc(a.nickname||'VK '+a.vk_id)}</b><span>${esc(a.position||'Без должности')}</span></div></div></td><td><span class="level ${Number(a.admin_level)===8?'level8':''}">◈ ${Number(a.admin_level||0)}</span></td><td class="count">${count}</td><td>${canDelete?`<button class="btn danger" onclick="deleteAdmin(${a.id})">Удалить</button>`:''}</td></tr>`;}
   html+='</tbody></table>';wrap.innerHTML=html;
 }
-async function deleteAdmin(id){if(!confirm('Удалить этот профиль администратора? Вход через VK после этого будет запрещён.'))return;const d=await api('/api/admins/'+id,'DELETE');if(d.error){toast(d.error,true);return;}toast('Профиль удалён');loadAdmins();}
+async function deleteAdmin(id){if(!confirm('Удалить этот профиль администратора? Вход в этот аккаунт после этого будет запрещён.'))return;const d=await api('/api/admins/'+id,'DELETE');if(d.error){toast(d.error,true);return;}toast('Профиль удалён');loadAdmins();}
 async function createAdmin(e){e.preventDefault();const f=new FormData(e.target);const body=Object.fromEntries(f.entries());body.admin_level=Number(body.admin_level);const d=await api('/api/admins','POST',body);if(d.error){toast(d.error,true);return;}toast('Профиль администратора создан');e.target.reset();closeModal('createModal');loadAdmins();}
 async function loadRoles(){
   if(Number(ADMIN.level||0)<8)return;
